@@ -1,0 +1,43 @@
+# Core dependencies for contract_splitter package
+
+# Document processing
+python-docx>=0.8.11          # For .doc and .docx file processing
+pdfplumber>=0.7.0            # Primary PDF processing library
+PyMuPDF>=1.20.0              # Alternative PDF library with outline support
+
+# Optional dependencies for enhanced functionality
+tiktoken>=0.4.0              # OpenAI's tokenizer for accurate token counting
+docx2txt>=0.8                # Alternative text extraction for problematic files
+textract>=1.6.3              # Universal text extraction library
+pywin32>=306                 # Windows COM support for legacy .doc files (Windows only)
+markitdown>=0.0.1a2          # Microsoft's document to markdown converter
+
+# System dependencies (install separately):
+# - antiword: For .doc files on Linux/Mac (brew install antiword / apt-get install antiword)
+# - pandoc: Universal document converter (https://pandoc.org/)
+# - libreoffice: Alternative document processor
+
+# Development and testing dependencies (optional)
+pytest>=7.0.0                # Testing framework
+pytest-cov>=4.0.0            # Coverage reporting
+black>=22.0.0                # Code formatting
+flake8>=5.0.0                # Linting
+mypy>=1.0.0                  # Type checking
+
+# Documentation dependencies (optional)
+sphinx>=5.0.0                # Documentation generation
+sphinx-rtd-theme>=1.0.0      # ReadTheDocs theme
+
+# Example and demo dependencies
+jupyter>=1.0.0               # For example notebooks
+matplotlib>=3.5.0            # For visualization in examples
+pandas>=1.4.0                # For data handling in examples
+
+# Note: Install core dependencies only with:
+# pip install python-docx pdfplumber PyMuPDF tiktoken
+
+# Install all dependencies with:
+# pip install -r requirements.txt
+
+# For minimal installation (without optional dependencies):
+# pip install python-docx pdfplumber PyMuPDF

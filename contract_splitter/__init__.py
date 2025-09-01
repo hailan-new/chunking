@@ -1,0 +1,197 @@
+"""
+Contract Splitter Package
+
+A Python package for splitting contract documents (.doc, .docx, .pdf) into 
+hierarchical sections with size constraints. Supports Chinese documents.
+
+Main Classes:
+    ContractSplitter: Main interface for document splitting
+    BaseSplitter: Abstract base class for custom splitters
+    DocxSplitter: Splitter for Word documents
+    PdfSplitter: Splitter for PDF documents
+
+Example Usage:
+    from contract_splitter import ContractSplitter
+    
+    splitter = ContractSplitter(max_tokens=2000, overlap=200)
+    sections = splitter.split("contract.docx")
+    chunks = splitter.flatten(sections)
+"""
+
+__version__ = "1.0.0"
+__author__ = "Contract Splitter Team"
+__email__ = "contact@example.com"
+
+# Import main classes for easy access
+from .base import ContractSplitter, BaseSplitter
+from .docx_splitter import DocxSplitter
+from .pdf_splitter import PdfSplitter
+from .utils import count_tokens, sliding_window_split, clean_text
+from .converter import DocumentConverter, convert_doc_to_docx, is_conversion_available
+
+# Define what gets imported with "from contract_splitter import *"
+__all__ = [
+    'ContractSplitter',
+    'BaseSplitter',
+    'DocxSplitter',
+    'PdfSplitter',
+    'DocumentConverter',
+    'convert_doc_to_docx',
+    'is_conversion_available',
+    'count_tokens',
+    'sliding_window_split',
+    'clean_text'
+]
+
+# Package metadata
+__package_info__ = {
+    'name': 'contract_splitter',
+    'version': __version__,
+    'description': 'Split contract documents into hierarchical sections with size constraints',
+    'author': __author__,
+    'author_email': __email__,
+    'url': 'https://github.com/example/contract_splitter',
+    'license': 'MIT',
+    'python_requires': '>=3.7',
+    'keywords': ['document', 'splitting', 'contract', 'pdf', 'docx', 'chinese'],
+    'classifiers': [
+        'Development Status :: 4 - Beta',
+        'Intended Audience :: Developers',
+        'License :: OSI Approved :: MIT License',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        'Topic :: Text Processing :: Linguistic',
+        'Topic :: Software Development :: Libraries :: Python Modules',
+    ]
+}
+
+# Configure logging for the package
+import logging
+
+# Create package logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Add console handler if no handlers exist
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    console_handler.setFormatter(formatter)
+    
+    logger.addHandler(console_handler)
+
+# Convenience function for quick splitting
+def split_document(file_path: str, max_tokens: int = 2000, overlap: int = 200, 
+                  split_by_sentence: bool = True, token_counter: str = "character"):
+    """
+    Convenience function to quickly split a document.
+    
+    Args:
+        file_path: Path to the document file
+        max_tokens: Maximum tokens per chunk
+        overlap: Overlap length for sliding window
+        split_by_sentence: Whether to split at sentence boundaries
+        token_counter: Token counting method ("character" or "tiktoken")
+        
+    Returns:
+        List of hierarchical section dictionaries
+    """
+    splitter = ContractSplitter(
+        max_tokens=max_tokens,
+        overlap=overlap,
+        split_by_sentence=split_by_sentence,
+        token_counter=token_counter
+    )
+    return splitter.split(file_path)
+
+def flatten_sections(sections, max_tokens: int = 2000, overlap: int = 200, 
+                    split_by_sentence: bool = True, token_counter: str = "character"):
+    """
+    Convenience function to flatten hierarchical sections.
+    
+    Args:
+        sections: List of hierarchical section dictionaries
+        max_tokens: Maximum tokens per chunk
+        overlap: Overlap length for sliding window
+        split_by_sentence: Whether to split at sentence boundaries
+        token_counter: Token counting method ("character" or "tiktoken")
+        
+    Returns:
+        List of text chunks ready for LLM ingestion
+    """
+    splitter = ContractSplitter(
+        max_tokens=max_tokens,
+        overlap=overlap,
+        split_by_sentence=split_by_sentence,
+        token_counter=token_counter
+    )
+    return splitter.flatten(sections)
+
+# Version check function
+def check_dependencies():
+    """
+    Check if all required dependencies are available.
+    
+    Returns:
+        Dict with dependency status
+    """
+    dependencies = {
+        'python-docx': False,
+        'pdfplumber': False,
+        'PyMuPDF': False,
+        'tiktoken': False
+    }
+    
+    try:
+        import docx
+        dependencies['python-docx'] = True
+    except ImportError:
+        pass
+    
+    try:
+        import pdfplumber
+        dependencies['pdfplumber'] = True
+    except ImportError:
+        pass
+    
+    try:
+        import fitz
+        dependencies['PyMuPDF'] = True
+    except ImportError:
+        pass
+    
+    try:
+        import tiktoken
+        dependencies['tiktoken'] = True
+    except ImportError:
+        pass
+    
+    return dependencies
+
+# Print dependency status on import (optional)
+def print_dependency_status():
+    """Print the status of optional dependencies."""
+    deps = check_dependencies()
+    logger.info("Contract Splitter dependency status:")
+    for dep, available in deps.items():
+        status = "✓" if available else "✗"
+        logger.info(f"  {status} {dep}")
+    
+    if not deps['python-docx']:
+        logger.warning("python-docx not found. DOCX support will be limited.")
+    if not deps['pdfplumber'] and not deps['PyMuPDF']:
+        logger.warning("Neither pdfplumber nor PyMuPDF found. PDF support will be limited.")
+    if not deps['tiktoken']:
+        logger.info("tiktoken not found. Using character-based token counting.")
+
+# Uncomment the line below to print dependency status on import
+# print_dependency_status()
