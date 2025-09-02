@@ -205,9 +205,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Contract Splitter - Test output directory
+# Ignore all files and directories in the output directory
+output/
 *.doc
 *.docx
 *.pdf
-/output/*.doc
-/output/*.docx
-/output/*.pdf
+*.wps

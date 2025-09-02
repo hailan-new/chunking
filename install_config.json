@@ -1,0 +1,122 @@
+{
+  "package_info": {
+    "name": "contract_splitter",
+    "version": "2.0.0",
+    "description": "Advanced document splitter with WPS native support"
+  },
+  "core_dependencies": [
+    "python-docx>=0.8.11",
+    "pdfplumber>=0.7.0",
+    "PyMuPDF>=1.20.0",
+    "striprtf>=0.0.26",
+    "requests>=2.25.0"
+  ],
+  "platform_dependencies": {
+    "windows": {
+      "wps_native": [
+        "pywin32>=306",
+        "pywpsrpc>=2.3.0"
+      ],
+      "system_requirements": [
+        "LibreOffice (https://www.libreoffice.org/)",
+        "WPS Office (https://www.wps.com/) - for native support"
+      ],
+      "installation_script": "install_scripts/install_windows.bat"
+    },
+    "darwin": {
+      "wps_support": [
+        "docx2txt>=0.8",
+        "httpx>=0.24.0"
+      ],
+      "system_requirements": [
+        "LibreOffice (brew install libreoffice)",
+        "antiword (brew install antiword)",
+        "pandoc (brew install pandoc)"
+      ],
+      "installation_script": "install_scripts/install_macos.sh"
+    },
+    "linux": {
+      "wps_native": [
+        "docx2txt>=0.8"
+      ],
+      "system_requirements": [
+        "LibreOffice (apt-get install libreoffice)",
+        "antiword (apt-get install antiword)",
+        "pandoc (apt-get install pandoc)",
+        "WPS Office for Linux (optional)"
+      ],
+      "installation_script": "install_scripts/install_linux.sh"
+    }
+  },
+  "optional_features": {
+    "enhanced": [
+      "tiktoken>=0.4.0",
+      "docx2txt>=0.8",
+      "textract>=1.6.3",
+      "markitdown>=0.0.1a2"
+    ],
+    "wps_api": [
+      "requests>=2.25.0",
+      "httpx>=0.24.0"
+    ],
+    "development": [
+      "pytest>=7.0.0",
+      "pytest-cov>=4.0.0",
+      "black>=22.0.0",
+      "flake8>=5.0.0",
+      "mypy>=1.0.0"
+    ]
+  },
+  "wps_processing_methods": {
+    "priority_order": [
+      "wps_native",
+      "wps_api", 
+      "libreoffice",
+      "alternative_libraries"
+    ],
+    "method_descriptions": {
+      "wps_native": {
+        "name": "WPS Office Native",
+        "platforms": ["windows", "linux"],
+        "quality": "highest",
+        "requirements": ["WPS Office installed"],
+        "description": "Uses WPS Office COM interface or command line"
+      },
+      "wps_api": {
+        "name": "WPS Cloud API",
+        "platforms": ["windows", "darwin", "linux"],
+        "quality": "high",
+        "requirements": ["WPS API key"],
+        "description": "Cloud-based conversion via WPS Open Platform"
+      },
+      "libreoffice": {
+        "name": "LibreOffice Conversion",
+        "platforms": ["windows", "darwin", "linux"],
+        "quality": "good",
+        "requirements": ["LibreOffice installed"],
+        "description": "Reliable fallback using LibreOffice"
+      },
+      "alternative_libraries": {
+        "name": "Alternative Libraries",
+        "platforms": ["windows", "darwin", "linux"],
+        "quality": "basic",
+        "requirements": ["Python libraries only"],
+        "description": "Basic text extraction using Python libraries"
+      }
+    }
+  },
+  "installation_commands": {
+    "minimal": "pip install python-docx pdfplumber PyMuPDF striprtf requests",
+    "standard": "pip install contract_splitter",
+    "enhanced": "pip install contract_splitter[enhanced]",
+    "wps_basic": "pip install contract_splitter[wps]",
+    "wps_windows": "pip install contract_splitter[wps-windows]",
+    "wps_api": "pip install contract_splitter[wps-api]",
+    "development": "pip install contract_splitter[enhanced,development]"
+  },
+  "verification_commands": {
+    "basic": "python -c \"from contract_splitter import split_document; print('Installation successful!')\"",
+    "wps_support": "python -c \"from contract_splitter.wps_processor import WPSProcessor; print('WPS support available')\"",
+    "full_test": "python -c \"from contract_splitter.domain_helpers import split_legal_document; print('Full functionality available')\""
+  }
+}

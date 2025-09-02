@@ -1,19 +1,25 @@
 """
 Contract Splitter Package
 
-A Python package for splitting contract documents (.doc, .docx, .pdf) into 
+A Python package for splitting contract documents (.doc, .docx, .pdf, .wps) into
 hierarchical sections with size constraints. Supports Chinese documents.
 
 Main Classes:
+    SplitterFactory: Factory for automatic format detection and splitter selection
     ContractSplitter: Main interface for document splitting
     BaseSplitter: Abstract base class for custom splitters
-    DocxSplitter: Splitter for Word documents
+    DocxSplitter: Splitter for Word documents (.docx, .doc)
     PdfSplitter: Splitter for PDF documents
+    WpsSplitter: Splitter for WPS documents
 
 Example Usage:
-    from contract_splitter import ContractSplitter
-    
-    splitter = ContractSplitter(max_tokens=2000, overlap=200)
+    # Using factory (recommended)
+    from contract_splitter import split_document
+    chunks = split_document("contract.docx", max_tokens=2000)
+
+    # Using specific splitter
+    from contract_splitter import DocxSplitter
+    splitter = DocxSplitter(max_tokens=2000, overlap=200)
     sections = splitter.split("contract.docx")
     chunks = splitter.flatten(sections)
 """
@@ -26,21 +32,28 @@ __email__ = "contact@example.com"
 from .base import ContractSplitter, BaseSplitter
 from .docx_splitter import DocxSplitter
 from .pdf_splitter import PdfSplitter
+from .wps_splitter import WpsSplitter
+from .splitter_factory import SplitterFactory, get_default_factory
 from .utils import count_tokens, sliding_window_split, clean_text
 from .converter import DocumentConverter, convert_doc_to_docx, is_conversion_available
 
 # Define what gets imported with "from contract_splitter import *"
 __all__ = [
+    'SplitterFactory',
+    'get_default_factory',
     'ContractSplitter',
     'BaseSplitter',
     'DocxSplitter',
     'PdfSplitter',
+    'WpsSplitter',
     'DocumentConverter',
     'convert_doc_to_docx',
     'is_conversion_available',
     'count_tokens',
     'sliding_window_split',
-    'clean_text'
+    'clean_text',
+    'split_document',
+    'flatten_sections'
 ]
 
 # Package metadata
@@ -90,28 +103,34 @@ if not logger.handlers:
     logger.addHandler(console_handler)
 
 # Convenience function for quick splitting
-def split_document(file_path: str, max_tokens: int = 2000, overlap: int = 200, 
-                  split_by_sentence: bool = True, token_counter: str = "character"):
+def split_document(file_path: str, max_tokens: int = 2000, overlap: int = 200,
+                  split_by_sentence: bool = True, token_counter: str = "character",
+                  strict_max_tokens: bool = False, **kwargs):
     """
-    Convenience function to quickly split a document.
-    
+    Convenience function to quickly split a document using automatic format detection.
+
     Args:
-        file_path: Path to the document file
+        file_path: Path to the document file (.docx, .doc, .pdf, .wps)
         max_tokens: Maximum tokens per chunk
         overlap: Overlap length for sliding window
         split_by_sentence: Whether to split at sentence boundaries
         token_counter: Token counting method ("character" or "tiktoken")
-        
+        strict_max_tokens: Whether to strictly enforce max_tokens limit
+        **kwargs: Additional arguments passed to the splitter
+
     Returns:
-        List of hierarchical section dictionaries
+        List of flattened text chunks ready for LLM ingestion
     """
-    splitter = ContractSplitter(
+    factory = get_default_factory()
+    return factory.split_and_flatten(
+        file_path,
         max_tokens=max_tokens,
         overlap=overlap,
         split_by_sentence=split_by_sentence,
-        token_counter=token_counter
+        token_counter=token_counter,
+        strict_max_tokens=strict_max_tokens,
+        **kwargs
     )
-    return splitter.split(file_path)
 
 def flatten_sections(sections, max_tokens: int = 2000, overlap: int = 200, 
                     split_by_sentence: bool = True, token_counter: str = "character"):
@@ -140,7 +159,7 @@ def flatten_sections(sections, max_tokens: int = 2000, overlap: int = 200,
 def check_dependencies():
     """
     Check if all required dependencies are available.
-    
+
     Returns:
         Dict with dependency status
     """
@@ -148,7 +167,10 @@ def check_dependencies():
         'python-docx': False,
         'pdfplumber': False,
         'PyMuPDF': False,
-        'tiktoken': False
+        'PyPDF2': False,
+        'tiktoken': False,
+        'win32com': False,
+        'libreoffice': False
     }
     
     try:
@@ -170,11 +192,33 @@ def check_dependencies():
         pass
     
     try:
+        import PyPDF2
+        dependencies['PyPDF2'] = True
+    except ImportError:
+        pass
+
+    try:
         import tiktoken
         dependencies['tiktoken'] = True
     except ImportError:
         pass
-    
+
+    try:
+        import win32com.client
+        dependencies['win32com'] = True
+    except ImportError:
+        pass
+
+    # Check LibreOffice
+    try:
+        import subprocess
+        result = subprocess.run(['libreoffice', '--version'],
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            dependencies['libreoffice'] = True
+    except:
+        pass
+
     return dependencies
 
 # Print dependency status on import (optional)

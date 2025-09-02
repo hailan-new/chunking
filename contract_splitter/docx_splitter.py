@@ -18,6 +18,8 @@ try:
 except ImportError:
     TEXTRACT_AVAILABLE = False
 
+# DocxSplitter focuses on DOCX and DOC files only
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,18 +31,39 @@ class DocxSplitter(BaseSplitter):
     Supports Chinese documents with proper text handling.
     """
     
-    def __init__(self, max_tokens: int = 2000, overlap: int = 200, 
-                 split_by_sentence: bool = True, token_counter: str = "character"):
+    def __init__(self, max_tokens: int = 2000, overlap: int = 200,
+                 split_by_sentence: bool = True, token_counter: str = "character",
+                 chunking_strategy: str = "finest_granularity",
+                 strict_max_tokens: bool = False,
+                 use_llm_heading_detection: bool = False,
+                 llm_config: dict = None):
         """
         Initialize DOCX splitter.
-        
+
         Args:
             max_tokens: Maximum tokens per chunk
             overlap: Overlap length for sliding window
             split_by_sentence: Whether to split at sentence boundaries
             token_counter: Token counting method
+            chunking_strategy: Chunking strategy for flatten operation
+            strict_max_tokens: Whether to strictly enforce max_tokens limit
+            use_llm_heading_detection: Whether to use LLM for heading detection
+            llm_config: LLM configuration dict
         """
-        super().__init__(max_tokens, overlap, split_by_sentence, token_counter)
+        super().__init__(max_tokens, overlap, split_by_sentence, token_counter,
+                        chunking_strategy, strict_max_tokens)
+
+        self.use_llm_heading_detection = use_llm_heading_detection
+        self.llm_heading_detector = None
+
+        if use_llm_heading_detection:
+            try:
+                from .llm_heading_detector import create_llm_heading_detector
+                self.llm_heading_detector = create_llm_heading_detector(**(llm_config or {}))
+                logger.info("LLM heading detection enabled")
+            except Exception as e:
+                logger.warning(f"Failed to initialize LLM heading detector: {e}")
+                self.use_llm_heading_detection = False
         
     def split(self, file_path: str) -> List[Dict[str, Any]]:
         """
@@ -217,16 +240,9 @@ class DocxSplitter(BaseSplitter):
                 # Find corresponding table object
                 for table in doc.tables:
                     if table._element == element:
-                        table_content = self._extract_table_content(table)
-                        if table_content:
-                            elem = {
-                                'text': table_content,
-                                'style': 'Table',
-                                'is_heading': False,
-                                'level': 3,  # Default level for tables
-                                'type': 'table'
-                            }
-                            elements.append(elem)
+                        # 按照用户方案：对每个table cell当作独立文档进行层级split
+                        cell_elements = self._extract_single_table_cells(table)
+                        elements.extend(cell_elements)
                         break
 
         # Fallback: if no elements found, use simple paragraph extraction
@@ -346,22 +362,26 @@ class DocxSplitter(BaseSplitter):
         current_section = None
         section_stack = []  # Stack to track nested sections
         
-        for element in elements:
+        for i, element in enumerate(elements):
+            # Debug logging for table cell elements
+            if element.get('source', '').startswith('table_cell'):
+                logger.info(f"Processing table cell element {i}: is_heading={element.get('is_heading')}, level={element.get('level')}, text_length={len(element.get('text', ''))}")
+
             if element['is_heading']:
                 # Create new section
                 section = {
                     'heading': element['text'],
-                    'content': '',
+                    'content': element['text'],  # 标题文字也要包含在content中
                     'level': element['level'],
                     'subsections': []
                 }
-                
+
                 # Determine where to place this section
                 if not section_stack or element['level'] <= section_stack[-1]['level']:
                     # Pop sections until we find the right parent level
                     while section_stack and element['level'] <= section_stack[-1]['level']:
                         section_stack.pop()
-                    
+
                     if section_stack:
                         # Add as subsection to parent
                         section_stack[-1]['subsections'].append(section)
@@ -374,16 +394,22 @@ class DocxSplitter(BaseSplitter):
                         section_stack[-1]['subsections'].append(section)
                     else:
                         sections.append(section)
-                
+
                 section_stack.append(section)
                 current_section = section
             else:
                 # Add content to current section
+                if element.get('source', '').startswith('table_cell'):
+                    logger.info(f"Adding table cell content to current_section: {current_section['heading'][:50] if current_section else 'None'}...")
+
                 if current_section is not None:
                     if current_section['content']:
                         current_section['content'] += '\n\n' + element['text']
                     else:
                         current_section['content'] = element['text']
+
+                    if element.get('source', '').startswith('table_cell'):
+                        logger.info(f"Table cell content added, new content length: {len(current_section['content'])}")
                 else:
                     # No current section, create a default one
                     if not sections:
@@ -404,209 +430,6 @@ class DocxSplitter(BaseSplitter):
                             last_section['content'] = element['text']
         
         return sections
-    
-    def _find_last_section(self, sections: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Find the last section in the hierarchy for adding content.
-        
-        Args:
-            sections: List of sections
-            
-        Returns:
-            Last section dictionary
-        """
-        if not sections:
-            return None
-        
-        last_section = sections[-1]
-        while last_section.get('subsections'):
-            last_section = last_section['subsections'][-1]
-        
-        return last_section
-    
-    def _apply_size_constraints(self, sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Apply size constraints to sections, splitting large ones.
-        
-        Args:
-            sections: List of hierarchical sections
-            
-        Returns:
-            List of size-constrained sections
-        """
-        result = []
-        
-        for section in sections:
-            result.append(self._process_section(section))
-        
-        return result
-    
-    def _process_section(self, section: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Process a single section, applying size constraints.
-        
-        Args:
-            section: Section dictionary
-            
-        Returns:
-            Processed section dictionary
-        """
-        # Process subsections first
-        processed_subsections = []
-        for subsection in section.get('subsections', []):
-            processed_subsections.append(self._process_section(subsection))
-        
-        # Check if content needs splitting
-        content = section.get('content', '')
-        if content and count_tokens(content, self.token_counter) > self.max_tokens:
-            # Split content using sliding window
-            chunks = sliding_window_split(
-                content, 
-                self.max_tokens, 
-                self.overlap,
-                self.split_by_sentence,
-                self.token_counter
-            )
-            
-            # Create subsections for chunks
-            for i, chunk in enumerate(chunks):
-                chunk_section = {
-                    'heading': f"{section['heading']} (Part {i+1})" if section['heading'] else f"Part {i+1}",
-                    'content': chunk,
-                    'level': section.get('level', 1) + 1,
-                    'subsections': []
-                }
-                processed_subsections.append(chunk_section)
-            
-            # Clear original content since it's now in subsections
-            content = ''
-        
-        return {
-            'heading': section.get('heading', ''),
-            'content': content,
-            'level': section.get('level', 1),
-            'subsections': processed_subsections
-        }
-
-    def _process_plain_text(self, text: str, file_path: str) -> List[Dict[str, Any]]:
-        """
-        Process plain text extracted from document.
-
-        Args:
-            text: Extracted plain text
-            file_path: Original file path for reference
-
-        Returns:
-            List of sections
-        """
-        if not text or not text.strip():
-            return [{
-                'heading': f'Document Content ({os.path.basename(file_path)})',
-                'content': 'No readable content found.',
-                'level': 1,
-                'subsections': []
-            }]
-
-        # Split text into paragraphs
-        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
-
-        sections = []
-        current_section = None
-
-        for paragraph in paragraphs:
-            if self._looks_like_heading(paragraph):
-                # Create new section
-                section = {
-                    'heading': paragraph,
-                    'content': '',
-                    'level': detect_heading_level(paragraph),
-                    'subsections': []
-                }
-                sections.append(section)
-                current_section = section
-            else:
-                # Add to current section
-                if current_section:
-                    if current_section['content']:
-                        current_section['content'] += '\n\n' + paragraph
-                    else:
-                        current_section['content'] = paragraph
-                else:
-                    # Create default section
-                    sections.append({
-                        'heading': f'Document Content ({os.path.basename(file_path)})',
-                        'content': paragraph,
-                        'level': 1,
-                        'subsections': []
-                    })
-                    current_section = sections[0]
-
-        return self._apply_size_constraints(sections)
-
-    def _convert_doc_with_win32com(self, file_path: str) -> List[Dict[str, Any]]:
-        """
-        Convert .doc file using win32com (Windows only).
-
-        Args:
-            file_path: Path to .doc file
-
-        Returns:
-            List of sections
-        """
-        try:
-            import win32com.client
-
-            # Create Word application
-            word = win32com.client.Dispatch("Word.Application")
-            word.Visible = False
-
-            # Open document
-            doc = word.Documents.Open(os.path.abspath(file_path))
-
-            # Extract text
-            text = doc.Content.Text
-
-            # Close document and application
-            doc.Close()
-            word.Quit()
-
-            return self._process_plain_text(text, file_path)
-
-        except ImportError:
-            raise ImportError("win32com not available. Install with: pip install pywin32")
-        except Exception as e:
-            raise ValueError(f"Failed to convert .doc file with win32com: {e}")
-
-    def _extract_docx_as_zip(self, file_path: str) -> List[Dict[str, Any]]:
-        """
-        Extract DOCX content by treating it as a ZIP file.
-
-        Args:
-            file_path: Path to DOCX file
-
-        Returns:
-            List of sections
-        """
-        import zipfile
-        import xml.etree.ElementTree as ET
-
-        try:
-            with zipfile.ZipFile(file_path, 'r') as zip_file:
-                # Read document.xml
-                doc_xml = zip_file.read('word/document.xml')
-                root = ET.fromstring(doc_xml)
-
-                # Extract text from XML
-                text_parts = []
-                for elem in root.iter():
-                    if elem.text:
-                        text_parts.append(elem.text)
-
-                text = ' '.join(text_parts)
-                return self._process_plain_text(text, file_path)
-
-        except Exception as e:
-            raise ValueError(f"Failed to extract DOCX as ZIP: {e}")
 
     def _enhance_structure_detection(self, elements: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -618,335 +441,231 @@ class DocxSplitter(BaseSplitter):
         Returns:
             Enhanced elements with better structure detection
         """
+        if not elements:
+            return elements
+
         enhanced_elements = []
 
-        for element in elements:
-            text = element['text']
+        for i, element in enumerate(elements):
+            enhanced_element = element.copy()
 
-            # Enhanced heading detection
-            if not element['is_heading']:
-                # Check for numbered patterns
+            # If not already detected as heading, try additional detection
+            if not enhanced_element.get('is_heading', False):
+                text = enhanced_element.get('text', '').strip()
+
+                # Additional heading detection patterns
+                heading_patterns = [
+                    r'^第[一二三四五六七八九十\d]+章\s*',  # 第X章
+                    r'^第[一二三四五六七八九十\d]+节\s*',  # 第X节
+                    r'^第[一二三四五六七八九十\d]+条\s*',  # 第X条
+                    r'^[一二三四五六七八九十\d]+、\s*',    # X、
+                    r'^（[一二三四五六七八九十\d]+）\s*',  # （X）
+                    r'^\d+\.\s*',                        # 1.
+                    r'^\d+\.\d+\s*',                     # 1.1
+                ]
+
                 import re
-
-                # Chinese patterns
-                chinese_patterns = [
-                    r'^第[一二三四五六七八九十\d]+[章节条款项]',
-                    r'^[一二三四五六七八九十]+[、．.]',
-                    r'^（[一二三四五六七八九十\d]+）',
-                    r'^\d+[、．.]',
-                    r'^\d+\.\d+',
-                ]
-
-                # English patterns
-                english_patterns = [
-                    r'^Chapter\s+\d+',
-                    r'^Section\s+\d+',
-                    r'^Article\s+\d+',
-                    r'^\d+\.\s+[A-Z]',
-                    r'^[A-Z][A-Z\s]+:$',  # ALL CAPS headings
-                ]
-
-                for pattern in chinese_patterns + english_patterns:
-                    if re.match(pattern, text, re.IGNORECASE):
-                        element['is_heading'] = True
-                        element['level'] = detect_heading_level(text)
+                for pattern in heading_patterns:
+                    if re.match(pattern, text):
+                        enhanced_element['is_heading'] = True
+                        # Determine level based on pattern
+                        if '章' in pattern:
+                            enhanced_element['level'] = 1
+                        elif '节' in pattern or '条' in pattern:
+                            enhanced_element['level'] = 2
+                        elif '、' in pattern or '（' in pattern:
+                            enhanced_element['level'] = 3
+                        elif re.match(r'^\d+\.', text):
+                            enhanced_element['level'] = 2
+                        elif re.match(r'^\d+\.\d+', text):
+                            enhanced_element['level'] = 3
+                        else:
+                            enhanced_element['level'] = 2
                         break
 
-                # Check for short lines that might be headings
-                if (len(text) < 100 and
-                    not text.endswith(('。', '.', '！', '!', '？', '?', '；', ';')) and
-                    len(text.split()) < 10):
-                    element['is_heading'] = True
-                    element['level'] = 3  # Default level for detected headings
-
-            enhanced_elements.append(element)
+            enhanced_elements.append(enhanced_element)
 
         return enhanced_elements
 
-    def _extract_table_content(self, table) -> str:
+    def _extract_docx_as_zip(self, file_path: str) -> List[Dict[str, Any]]:
         """
-        Extract content from a table in a structured format with improved layout handling.
+        Extract DOCX content by treating it as a ZIP file.
+
+        Args:
+            file_path: Path to the DOCX file
+
+        Returns:
+            List of document elements
+        """
+        import zipfile
+        import xml.etree.ElementTree as ET
+
+        elements = []
+
+        try:
+            with zipfile.ZipFile(file_path, 'r') as zip_file:
+                # Read document.xml
+                if 'word/document.xml' in zip_file.namelist():
+                    with zip_file.open('word/document.xml') as doc_file:
+                        tree = ET.parse(doc_file)
+                        root = tree.getroot()
+
+                        # Extract text from paragraphs
+                        for para in root.iter():
+                            if para.tag.endswith('}p'):  # paragraph
+                                text_parts = []
+                                for text_elem in para.iter():
+                                    if text_elem.tag.endswith('}t'):  # text
+                                        if text_elem.text:
+                                            text_parts.append(text_elem.text)
+
+                                if text_parts:
+                                    text = ''.join(text_parts).strip()
+                                    if text:
+                                        # Basic heading detection
+                                        is_heading = detect_heading_level(text) > 0
+                                        level = detect_heading_level(text) if is_heading else 0
+
+                                        elements.append({
+                                            'text': text,
+                                            'type': 'heading' if is_heading else 'paragraph',
+                                            'is_heading': is_heading,
+                                            'level': level,
+                                            'source': 'zip_extraction'
+                                        })
+
+        except Exception as e:
+            logger.warning(f"ZIP extraction failed: {e}")
+            raise
+
+        return elements
+
+    def _extract_single_table_cells(self, table) -> List[Dict[str, Any]]:
+        """
+        Extract cells from a single table as separate document elements.
 
         Args:
             table: python-docx Table object
 
         Returns:
-            Formatted table content as string
+            List of table cell elements
         """
-        table_text = []
-        table_text.append("【表格内容】")
+        elements = []
 
-        # Method 1: Smart table extraction that handles merged cells and layout
         try:
-            extracted_content = self._extract_table_smart(table)
-            if extracted_content:
-                table_text.extend(extracted_content)
-                table_text.append("【表格结束】")
-                return "\n".join(table_text)
-        except Exception as e:
-            logger.warning(f"Smart table extraction failed: {e}")
-
-        # Method 2: Traditional row-by-row extraction
-        try:
-            extracted_content = []
-            for i, row in enumerate(table.rows):
-                row_data = []
-                for j, cell in enumerate(row.cells):
-                    cell_text = clean_text(cell.text)
+            for row_idx, row in enumerate(table.rows):
+                for cell_idx, cell in enumerate(row.cells):
+                    cell_text = cell.text.strip()
                     if cell_text:
-                        row_data.append(f"列{j+1}: {cell_text}")
+                        elements.append({
+                            'text': cell_text,
+                            'type': 'table_cell',
+                            'is_heading': False,
+                            'level': 0,
+                            'source': f'table_cell_{row_idx}_{cell_idx}',
+                            'table_info': {
+                                'row_index': row_idx,
+                                'cell_index': cell_idx
+                            }
+                        })
 
-                if row_data:
-                    extracted_content.append(f"行{i+1}: {' | '.join(row_data)}")
-
-            if extracted_content:
-                table_text.extend(extracted_content)
-                table_text.append("【表格结束】")
-                return "\n".join(table_text)
         except Exception as e:
-            logger.warning(f"Row-by-row extraction failed: {e}")
+            logger.warning(f"Single table cell extraction failed: {e}")
 
-        # Method 3: Cell by cell extraction (fallback)
+        return elements
+
+    def _extract_table_cells_as_documents(self, doc) -> List[Dict[str, Any]]:
+        """
+        Extract table cells as separate document elements.
+
+        Args:
+            doc: python-docx Document object
+
+        Returns:
+            List of table cell elements
+        """
+        elements = []
+
         try:
-            all_cells = []
-            for i, row in enumerate(table.rows):
-                for j, cell in enumerate(row.cells):
-                    # Extract all paragraphs from cell
-                    cell_paragraphs = []
-                    for paragraph in cell.paragraphs:
-                        text = clean_text(paragraph.text)
-                        if text:
-                            cell_paragraphs.append(text)
+            for table_idx, table in enumerate(doc.tables):
+                for row_idx, row in enumerate(table.rows):
+                    for cell_idx, cell in enumerate(row.cells):
+                        cell_text = cell.text.strip()
+                        if cell_text:
+                            elements.append({
+                                'text': cell_text,
+                                'type': 'table_cell',
+                                'is_heading': False,
+                                'level': 0,
+                                'source': f'table_cell_{table_idx}_{row_idx}_{cell_idx}',
+                                'table_info': {
+                                    'table_index': table_idx,
+                                    'row_index': row_idx,
+                                    'cell_index': cell_idx
+                                }
+                            })
 
-                    if cell_paragraphs:
-                        cell_content = " ".join(cell_paragraphs)
-                        all_cells.append(f"单元格({i+1},{j+1}): {cell_content}")
-
-            if all_cells:
-                table_text.extend(all_cells)
-                table_text.append("【表格结束】")
-                return "\n".join(table_text)
         except Exception as e:
-            logger.warning(f"Cell-by-cell extraction failed: {e}")
+            logger.warning(f"Table cell extraction failed: {e}")
 
-        # Method 4: Try key-value extraction for form-like tables
-        try:
-            kv_content = self._extract_table_as_key_value(table)
-            if kv_content:
-                table_text.append(kv_content)
-                table_text.append("【表格结束】")
-                return "\n".join(table_text)
-        except Exception as e:
-            logger.warning(f"Key-value extraction failed: {e}")
+        return elements
 
-        table_text.append("表格内容为空或无法提取")
-        table_text.append("【表格结束】")
-        return "\n".join(table_text)
-
-    def _extract_table_smart(self, table) -> List[str]:
+    def _apply_size_constraints(self, sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Smart table extraction that handles complex layouts and merged cells.
+        Apply size constraints to sections.
 
         Args:
-            table: python-docx Table object
+            sections: List of hierarchical sections
 
         Returns:
-            List of formatted content strings
+            Sections with size constraints applied
         """
-        content = []
+        if not sections:
+            return sections
 
-        # First, analyze the table structure
-        num_rows = len(table.rows)
-        num_cols = len(table.columns) if table.rows else 0
+        # If strict_max_tokens is enabled, ensure no section exceeds the limit
+        if self.strict_max_tokens:
+            return self._enforce_strict_size_limits(sections)
 
-        if num_rows == 0:
-            return []
+        return sections
 
-        # Get the maximum number of cells in any row (handles irregular tables)
-        max_cells = max(len(row.cells) for row in table.rows)
-
-        # Create a grid to track cell content and merged cells
-        cell_grid = {}
-        processed_cells = set()
-
-        for i, row in enumerate(table.rows):
-            for j, cell in enumerate(row.cells):
-                if (i, j) in processed_cells:
-                    continue
-
-                cell_text = clean_text(cell.text)
-                if not cell_text:
-                    continue
-
-                # Check if this is a merged cell by looking at cell dimensions
-                cell_width = getattr(cell, '_tc', None)
-                if cell_width is not None:
-                    # Try to detect merged cells (this is approximate)
-                    colspan = 1
-                    rowspan = 1
-
-                    # Mark cells as processed
-                    for r in range(i, i + rowspan):
-                        for c in range(j, j + colspan):
-                            processed_cells.add((r, c))
-
-                cell_grid[(i, j)] = {
-                    'text': cell_text,
-                    'row': i,
-                    'col': j,
-                    'colspan': colspan,
-                    'rowspan': rowspan
-                }
-
-        # Now extract content in a more structured way
-        if num_rows <= 3 and max_cells <= 4:
-            # Likely a form-like table, extract as key-value pairs
-            content.extend(self._extract_form_table(cell_grid, num_rows, max_cells))
-        else:
-            # Larger table, extract with better structure preservation
-            content.extend(self._extract_structured_table(cell_grid, num_rows, max_cells))
-
-        return content
-
-    def _extract_form_table(self, cell_grid: dict, num_rows: int, max_cells: int) -> List[str]:
-        """Extract form-like table as key-value pairs."""
-        content = []
-
-        # Group cells by row and try to pair them as key-value
-        for row in range(num_rows):
-            row_cells = [(col, cell) for (r, col), cell in cell_grid.items() if r == row]
-            row_cells.sort(key=lambda x: x[0])  # Sort by column
-
-            if len(row_cells) == 2:
-                # Two cells: likely key-value pair
-                key_cell = row_cells[0][1]['text']
-                value_cell = row_cells[1][1]['text']
-                content.append(f"{key_cell}: {value_cell}")
-            elif len(row_cells) == 4:
-                # Four cells: likely two key-value pairs
-                if len(row_cells) >= 2:
-                    key1 = row_cells[0][1]['text']
-                    value1 = row_cells[1][1]['text']
-                    content.append(f"{key1}: {value1}")
-                if len(row_cells) >= 4:
-                    key2 = row_cells[2][1]['text']
-                    value2 = row_cells[3][1]['text']
-                    content.append(f"{key2}: {value2}")
-            else:
-                # Other cases: just list the content
-                for col, cell in row_cells:
-                    content.append(f"行{row+1}列{col+1}: {cell['text']}")
-
-        return content
-
-    def _extract_structured_table(self, cell_grid: dict, num_rows: int, max_cells: int) -> List[str]:
-        """Extract larger table with structure preservation."""
-        content = []
-
-        # Extract row by row, but with better formatting
-        for row in range(num_rows):
-            row_cells = [(col, cell) for (r, col), cell in cell_grid.items() if r == row]
-            row_cells.sort(key=lambda x: x[0])  # Sort by column
-
-            if row_cells:
-                if row == 0 and len(row_cells) > 2:
-                    # First row might be headers
-                    headers = [cell['text'] for col, cell in row_cells]
-                    content.append(f"表头: {' | '.join(headers)}")
-                else:
-                    # Regular data row
-                    row_data = []
-                    for col, cell in row_cells:
-                        row_data.append(f"列{col+1}: {cell['text']}")
-                    content.append(f"行{row+1}: {' | '.join(row_data)}")
-
-        return content
-
-    def _extract_table_as_key_value(self, table) -> str:
+    def _enforce_strict_size_limits(self, sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Extract table content as key-value pairs (useful for forms).
+        Enforce strict size limits on sections.
 
         Args:
-            table: python-docx Table object
+            sections: List of sections
 
         Returns:
-            Formatted key-value content
+            Sections with enforced size limits
         """
-        content = []
+        processed_sections = []
 
-        for row in table.rows:
-            cells = [clean_text(cell.text) for cell in row.cells if clean_text(cell.text)]
+        for section in sections:
+            # Process subsections first
+            if section.get('subsections'):
+                section['subsections'] = self._enforce_strict_size_limits(section['subsections'])
 
-            if len(cells) >= 2:
-                # Treat as key-value pairs
-                key = cells[0]
-                value = " | ".join(cells[1:])
-                content.append(f"{key}: {value}")
-            elif len(cells) == 1:
-                # Single cell content
-                content.append(cells[0])
-
-        return "\n".join(content) if content else ""
-
-    def _extract_with_antiword(self, file_path: str) -> str:
-        """
-        Extract text using antiword command-line tool.
-
-        Args:
-            file_path: Path to .doc file
-
-        Returns:
-            Extracted text
-        """
-        import subprocess
-
-        try:
-            result = subprocess.run(
-                ['antiword', file_path],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            return result.stdout
-        except FileNotFoundError:
-            raise ValueError("antiword not found. Install with: brew install antiword (Mac) or apt-get install antiword (Linux)")
-        except subprocess.CalledProcessError as e:
-            raise ValueError(f"antiword failed: {e}")
-
-    def _extract_with_pandoc(self, file_path: str) -> str:
-        """
-        Extract text using pandoc.
-
-        Args:
-            file_path: Path to .doc file
-
-        Returns:
-            Extracted text
-        """
-        import subprocess
-        import tempfile
-
-        try:
-            # Convert to plain text using pandoc
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tmp_file:
-                result = subprocess.run(
-                    ['pandoc', file_path, '-t', 'plain', '-o', tmp_file.name],
-                    capture_output=True,
-                    text=True,
-                    check=True
+            # Check section content size
+            content = section.get('content', '')
+            if content and count_tokens(content) > self.max_tokens:
+                # Split large content
+                split_content = sliding_window_split(
+                    content,
+                    self.max_tokens,
+                    self.overlap,
+                    by_sentence=self.split_by_sentence
                 )
 
-                # Read the converted text
-                with open(tmp_file.name, 'r', encoding='utf-8') as f:
-                    text = f.read()
+                # Create multiple sections from split content
+                for i, chunk in enumerate(split_content):
+                    new_section = section.copy()
+                    new_section['content'] = chunk
+                    new_section['subsections'] = [] if i > 0 else section.get('subsections', [])
+                    if i > 0:
+                        new_section['heading'] = f"{section['heading']} (Part {i+1})"
+                    processed_sections.append(new_section)
+            else:
+                processed_sections.append(section)
 
-                # Clean up
-                os.unlink(tmp_file.name)
-                return text
-
-        except FileNotFoundError:
-            raise ValueError("pandoc not found. Install from https://pandoc.org/")
-        except subprocess.CalledProcessError as e:
-            raise ValueError(f"pandoc failed: {e}")
-        except Exception as e:
-            raise ValueError(f"pandoc extraction failed: {e}")
+        return processed_sections

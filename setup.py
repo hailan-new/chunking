@@ -5,6 +5,7 @@ Setup script for contract_splitter package.
 
 from setuptools import setup, find_packages
 import os
+import platform
 
 # Read README for long description
 def read_readme():
@@ -28,10 +29,10 @@ def read_requirements():
 
 setup(
     name="contract_splitter",
-    version="1.1.0",
+    version="2.0.0",
     author="Contract Splitter Team",
     author_email="contact@example.com",
-    description="Advanced document splitter with enhanced table extraction and multi-format support for contracts and legal documents",
+    description="Advanced document splitter with WPS native support, enhanced table extraction and multi-format support for contracts and legal documents",
     long_description=read_readme(),
     long_description_content_type="text/markdown",
     url="https://github.com/example/contract_splitter",
@@ -60,6 +61,8 @@ setup(
         "python-docx>=0.8.11",
         "pdfplumber>=0.7.0",
         "PyMuPDF>=1.20.0",
+        "striprtf>=0.0.26",  # RTF processing for WPS files
+        "requests>=2.25.0",  # For WPS API support
     ],
     extras_require={
         "tiktoken": ["tiktoken>=0.4.0"],
@@ -71,6 +74,20 @@ setup(
         "conversion": [
             "docx2txt>=0.8",
             "textract>=1.6.3",
+        ],
+        # WPS native support (platform-specific)
+        "wps": [
+            "docx2txt>=0.8",
+            "striprtf>=0.0.26",
+            "requests>=2.25.0",
+        ] + (["pywin32>=306"] if platform.system() == "Windows" else []),
+        "wps-windows": [
+            "pywin32>=306",
+            "pywpsrpc>=2.3.0",  # WPS Office RPC for Windows
+        ],
+        "wps-api": [
+            "requests>=2.25.0",
+            "httpx>=0.24.0",  # Alternative HTTP client
         ],
         "dev": [
             "pytest>=7.0.0",
@@ -101,10 +118,10 @@ setup(
         ],
     },
     keywords=[
-        "document", "splitting", "contract", "pdf", "docx", "doc",
+        "document", "splitting", "contract", "pdf", "docx", "doc", "wps",
         "chinese", "nlp", "text-processing", "chunking", "table-extraction",
         "legal-documents", "financial-documents", "document-conversion",
-        "hierarchical-parsing", "content-extraction"
+        "hierarchical-parsing", "content-extraction", "wps-native", "rtf-processing"
     ],
     project_urls={
         "Bug Reports": "https://github.com/example/contract_splitter/issues",

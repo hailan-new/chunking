@@ -1,12 +1,15 @@
 # Contract Splitter
 
-An advanced Python package for splitting contract documents (.doc, .docx, .pdf) into hierarchical sections with enhanced table extraction and automatic format conversion. Designed for legal and financial documents with comprehensive Chinese language support.
+An advanced Python package for splitting contract documents (.doc, .docx, .pdf, .wps) into hierarchical sections with intelligent format detection, specialized domain processing, and automatic format conversion. Features a factory pattern architecture for optimal document processing and comprehensive Chinese language support.
 
 ## 🚀 Key Features
 
-- **🔄 Automatic Format Conversion**: Seamlessly converts legacy .doc files to .docx using LibreOffice/pandoc
+- **🏭 Factory Pattern Architecture**: Intelligent splitter selection based on file format
+- **🎯 Specialized Domain Processing**: Dedicated splitters for legal documents, contracts, and regulations
+- **🔄 WPS Native Support**: First-class WPS file processing with multiple conversion methods
+- **🔄 Automatic Format Conversion**: Seamlessly converts .doc and .wps files using WPS Office, LibreOffice, or Win32COM
+- **📁 Multi-format Support**: Process .doc, .docx, .pdf, and .wps files with automatic detection
 - **📊 Enhanced Table Extraction**: Advanced table structure preservation with smart cell mapping
-- **📁 Multi-format Support**: Process .doc, .docx, and structured PDF files
 - **🏗️ Hierarchical Structure**: Maintains document hierarchy (chapters, sections, subsections)
 - **🇨🇳 Chinese Language Support**: Optimized for Chinese contracts and legal documents
 - **⚙️ Flexible Splitting**: Size-constrained splitting with configurable parameters
@@ -17,16 +20,28 @@ An advanced Python package for splitting contract documents (.doc, .docx, .pdf) 
 
 ## 📦 Installation
 
-### Quick Install (Recommended)
+### 🚀 Smart Installer (Recommended)
+
+The smart installer automatically detects your platform and installs the best dependencies:
+
+```bash
+# Download and run smart installer
+python3 install.py
+
+# Or one-line quick install
+curl -sSL https://raw.githubusercontent.com/your-repo/contract_splitter/main/quick_install.sh | bash
+```
+
+### 📦 Standard Installation
 
 ```bash
 pip install contract-splitter
 ```
 
-### Core Dependencies Only
+### 🔧 Core Dependencies Only
 
 ```bash
-pip install python-docx pdfplumber PyMuPDF
+pip install python-docx pdfplumber PyMuPDF striprtf requests
 ```
 
 ### Enhanced Features
@@ -40,45 +55,202 @@ pip install contract-splitter[tiktoken]
 
 # For document conversion support
 pip install contract-splitter[conversion]
+
+# For WPS native support (choose based on your platform)
+pip install contract-splitter[wps]           # Basic WPS support
+pip install contract-splitter[wps-windows]   # Windows native WPS support
+pip install contract-splitter[wps-api]       # WPS API support
 ```
 
-### System Dependencies (for .doc conversion)
+### Platform-Specific Installation
+
+**Windows (with WPS native support):**
+```bash
+# Run the automated installer
+install_scripts/install_windows.bat
+
+# Or install manually
+pip install contract-splitter[wps-windows]
+```
 
 **macOS:**
 ```bash
-brew install libreoffice  # or pandoc
+# Run the automated installer
+bash install_scripts/install_macos.sh
+
+# Or install manually
+brew install libreoffice  # Recommended for .doc/.wps conversion
+pip install contract-splitter[wps]
 ```
 
-**Ubuntu/Debian:**
+**Linux:**
 ```bash
-sudo apt-get install libreoffice  # or pandoc
+# Run the automated installer
+bash install_scripts/install_linux.sh
+
+# Or install manually
+sudo apt-get install libreoffice  # Ubuntu/Debian
+sudo yum install libreoffice      # CentOS/RHEL
+pip install contract-splitter[wps]
 ```
 
 **Windows:**
 - Install LibreOffice from https://www.libreoffice.org/
+- For native WPS support: Install WPS Office from https://www.wps.com/
 - Or install pandoc from https://pandoc.org/
+
+## 📄 WPS File Processing Methods
+
+Contract Splitter provides multiple methods for processing WPS files, automatically selecting the best available option:
+
+### 🥇 Priority Order (Automatic Selection)
+
+1. **WPS Office Native** (Windows/Linux) - Best quality
+   - Uses WPS Office COM interface (Windows)
+   - Uses WPS Office command line (Linux)
+   - Preserves original formatting and structure
+
+2. **WPS API** (All platforms) - Cloud-based
+   - Requires WPS Open Platform API key
+   - High-quality conversion via WPS cloud services
+   - Works on all platforms
+
+3. **LibreOffice Conversion** (All platforms) - Reliable fallback
+   - Uses LibreOffice for format conversion
+   - Good compatibility and quality
+   - Available on all platforms
+
+4. **Alternative Libraries** (All platforms) - Last resort
+   - Uses docx2txt and other libraries
+   - Basic text extraction
+   - May lose some formatting
+
+### 🔧 Manual Configuration
+
+```python
+from contract_splitter.wps_processor import WPSProcessor
+
+# With WPS API key (recommended for production)
+processor = WPSProcessor(wps_api_key="your_api_key_here")
+
+# The system will automatically try methods in priority order
+chunks = split_document("document.wps", max_tokens=2000)
+```
+
+### 🎯 Platform-Specific Recommendations
+
+- **Windows**: Install WPS Office for best results
+- **macOS**: Use LibreOffice (WPS Office not available)
+- **Linux**: Install WPS Office for Linux or use LibreOffice
+- **Cloud/Server**: Use WPS API with API key
 
 ## 🚀 Quick Start
 
+### Simple Usage (Recommended)
+
 ```python
-from contract_splitter import ContractSplitter
+from contract_splitter import split_document
 
-# Create splitter with default settings
-splitter = ContractSplitter(max_tokens=2000, overlap=200)
+# Automatic format detection and processing
+chunks = split_document("contract.docx", max_tokens=2000)
+print(f"Generated {len(chunks)} chunks")
 
-# Split a document (supports .doc, .docx, .pdf)
-sections = splitter.split("contract.doc")  # Automatic conversion!
+# Works with multiple formats
+chunks = split_document("legal_doc.pdf", max_tokens=1500)  # PDF support
+chunks = split_document("old_contract.doc", max_tokens=2000)  # Auto-converts DOC
+chunks = split_document("wps_file.wps", max_tokens=2000)  # WPS support
+```
 
-# Print section structure
-for section in sections:
-    print(f"Heading: {section['heading']}")
-    print(f"Content: {section['content'][:100]}...")
-    print(f"Subsections: {len(section['subsections'])}")
+### Advanced Usage with Factory Pattern
 
-# Flatten to chunks for LLM ingestion
-chunks = splitter.flatten(sections)
-for i, chunk in enumerate(chunks):
-    print(f"Chunk {i+1}: {chunk[:100]}...")
+```python
+from contract_splitter import SplitterFactory
+
+# Create factory instance
+factory = SplitterFactory()
+
+# Get file information and format support
+file_info = factory.get_file_info("contract.docx")
+print(f"Format: {file_info['format']}, Supported: {file_info['supported']}")
+print(f"Will use: {file_info['splitter_class']}")
+
+# Process with custom settings
+chunks = factory.split_and_flatten(
+    "contract.docx",
+    max_tokens=2000,
+    overlap=200,
+    strict_max_tokens=True
+)
+```
+
+### Specialized Domain Processing
+
+```python
+from contract_splitter.domain_helpers import (
+    split_legal_document,
+    split_contract,
+    split_regulation
+)
+
+# Legal documents (optimized for laws, regulations)
+legal_chunks = split_legal_document("law.docx", max_tokens=1500)
+
+# Contracts (optimized for business contracts)
+contract_chunks = split_contract("contract.docx", contract_type="general")
+
+# Regulations (optimized for internal policies)
+regulation_chunks = split_regulation("policy.docx", regulation_type="general")
+```
+
+### 📄 WPS File Processing Workflow
+
+The system automatically handles WPS files through an intelligent workflow:
+
+```python
+from contract_splitter import split_document
+from contract_splitter.wps_processor import WPSProcessor
+
+# Simple usage - automatic method selection
+chunks = split_document("document.wps", max_tokens=2000)
+
+# Advanced usage with custom WPS processor
+processor = WPSProcessor(wps_api_key="your_api_key")  # Optional API key
+
+# The system follows this workflow:
+# 1. Detect WPS file format
+# 2. Try WPS native methods (if available)
+# 3. Fallback to LibreOffice conversion
+# 4. Extract text using RTF processing
+# 5. Apply legal document splitting logic
+# 6. Return structured chunks
+
+# Check available conversion methods
+print("Available converters:", processor.available_converters)
+# Output: ['wps_native', 'libreoffice', 'direct'] (platform-dependent)
+```
+
+### 🔄 WPS Processing Method Details
+
+```python
+# Method 1: WPS Office Native (Windows/Linux)
+# - Uses WPS Office COM interface (Windows)
+# - Uses WPS Office command line (Linux)
+# - Highest quality, preserves formatting
+
+# Method 2: WPS Cloud API (All platforms)
+# - Requires WPS Open Platform API key
+# - High-quality cloud conversion
+# - Works on all platforms
+
+# Method 3: LibreOffice Conversion (All platforms)
+# - Converts WPS to RTF/DOCX format
+# - Uses professional RTF parsing (striprtf library)
+# - Reliable fallback method
+
+# Method 4: Alternative Libraries (All platforms)
+# - Uses docx2txt and similar libraries
+# - Basic text extraction
+# - Last resort method
 ```
 
 ### 📊 Enhanced Table Processing
@@ -93,14 +265,52 @@ sections = splitter.split("document_with_tables.docx")
 # 业务类型: 新增代销合作机构
 ```
 
+## 🏗️ Architecture Overview
+
+The package uses a **Factory Pattern** architecture for optimal document processing:
+
+```
+SplitterFactory
+├── DocxSplitter (.docx, .doc)
+├── PdfSplitter (.pdf)
+├── WpsSplitter (.wps)
+└── Automatic Format Detection
+```
+
+### Format-Specific Processing
+
+| Format | Splitter | Features |
+|--------|----------|----------|
+| **DOCX** | `DocxSplitter` | Native python-docx processing, table extraction |
+| **DOC** | `DocxSplitter` | Auto-conversion via LibreOffice |
+| **PDF** | `PdfSplitter` | Multi-backend (pdfplumber, PyMuPDF, PyPDF2) |
+| **WPS** | `WpsSplitter` | Conversion to DOCX then processing |
+
+### Domain-Specific Helpers
+
+- **Legal Documents**: Optimized for laws, regulations, court decisions
+- **Contracts**: Specialized for business contracts and agreements
+- **Regulations**: Tailored for internal policies and procedures
+
 ## Configuration Options
 
 ```python
-splitter = ContractSplitter(
+# Using specific splitter
+from contract_splitter import DocxSplitter
+splitter = DocxSplitter(
     max_tokens=2000,           # Maximum tokens per chunk
     overlap=200,               # Overlap length for sliding window
     split_by_sentence=True,    # Respect sentence boundaries
-    token_counter="character"  # "character" or "tiktoken"
+    token_counter="character", # "character" or "tiktoken"
+    strict_max_tokens=True     # Enforce strict token limits
+)
+
+# Using factory with auto-detection
+from contract_splitter import split_document
+chunks = split_document(
+    "document.docx",
+    max_tokens=2000,
+    strict_max_tokens=True
 )
 ```
 
@@ -127,24 +337,35 @@ The package returns hierarchical sections in this format:
 ## 📄 Supported Document Types
 
 ### 📝 Word Documents (.doc, .docx)
-- **✅ Legacy .doc Support**: Automatic conversion using LibreOffice/pandoc
+- **✅ Native DOCX Support**: Direct processing with python-docx
+- **🔄 Legacy .doc Support**: Automatic conversion using LibreOffice
 - **📊 Enhanced Table Extraction**: Smart table structure preservation
 - **🎯 Heading Detection**: Extracts heading styles (Heading 1, Heading 2, etc.)
 - **🇨🇳 Chinese Patterns**: Detects Chinese and English heading patterns
 - **📋 Structure Preservation**: Maintains paragraph and list structure
-- **🔄 Multiple Fallbacks**: Robust error handling for corrupted files
+- **🛡️ Multiple Fallbacks**: Robust error handling for corrupted files
 
 ### 📄 PDF Files (.pdf)
-- **🔖 Outline Extraction**: Uses document outline/bookmarks when available
-- **🎨 Font-based Detection**: Falls back to font-size based heading detection
-- **📊 Structured PDFs**: Supports structured (non-OCR) PDFs
+- **🔖 Multi-Backend Support**: pdfplumber, PyMuPDF, PyPDF2
+- **📊 Digital PDF Processing**: Optimized for text-based (non-OCR) PDFs
+- **🎨 Font-based Detection**: Intelligent heading detection
 - **🔍 Content Analysis**: Advanced text extraction and structure detection
+- **⚠️ OCR Detection**: Automatically detects scanned documents
 
-### 🆕 New in v1.1.0
-- **🔄 Automatic .doc Conversion**: Seamless legacy format support
-- **📊 Smart Table Processing**: Enhanced table content extraction
-- **🛡️ Robust Error Handling**: Multiple conversion methods with fallbacks
-- **⚡ Performance Improvements**: Optimized processing pipeline
+### 📋 WPS Files (.wps)
+- **🔄 Automatic Conversion**: Converts to DOCX using LibreOffice or Win32COM
+- **🖥️ Cross-Platform**: Works on Windows (COM), macOS/Linux (LibreOffice)
+- **📊 Full Feature Support**: All DOCX features after conversion
+- **🛡️ Fallback Methods**: Multiple conversion strategies
+
+### 🆕 New in v2.0.0
+- **🏭 Factory Pattern Architecture**: Intelligent format detection and splitter selection
+- **🎯 Specialized Domain Processing**: Legal, contract, and regulation-specific splitters
+- **📋 WPS File Support**: Native WPS document processing
+- **🔄 Enhanced Format Conversion**: Improved .doc and .wps conversion
+- **📊 Multi-Backend PDF Support**: pdfplumber, PyMuPDF, PyPDF2 integration
+- **🛡️ Robust Error Handling**: Multiple fallback strategies for each format
+- **⚡ Performance Improvements**: Optimized processing pipeline with caching
 
 ## Chinese Language Support
 
