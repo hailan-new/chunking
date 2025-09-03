@@ -300,12 +300,45 @@ class RTFProcessor:
         text = re.sub(r'应当对\s*本办法\s*第([一二三四五六七八九十百千万\d]+)条到\s*第([一二三四五六七八九十百千万\d]+)条的内容',
                      r'应当对本办法第\1条到第\2条的内容', text)
 
+        # 修复被截断的条文内容（如"制定本"应该是"制定本办法"）
+        text = re.sub(r'制定本(?!\w)', '制定本办法', text)
+        text = re.sub(r'根据本(?!\w)', '根据本办法', text)
+        text = re.sub(r'按照本(?!\w)', '按照本办法', text)
+        text = re.sub(r'违反本(?!\w)', '违反本办法', text)
+
         # 在重要的法律结构前添加换行
         text = re.sub(r'(第[一二三四五六七八九十百千万\d]+编)', r'\n\n\1', text)
         text = re.sub(r'(第[一二三四五六七八九十百千万\d]+篇)', r'\n\n\1', text)
         text = re.sub(r'(第[一二三四五六七八九十百千万\d]+章)', r'\n\n\1', text)
         text = re.sub(r'(第[一二三四五六七八九十百千万\d]+节)', r'\n\n\1', text)
         text = re.sub(r'(第[一二三四五六七八九十百千万\d]+条)', r'\n\n\1', text)
+
+        # 确保条文内容的完整性 - 修复被错误换行分割的句子
+        # 如果一行以不完整的词结尾，尝试与下一行合并
+        lines = text.split('\n')
+        fixed_lines = []
+        i = 0
+        while i < len(lines):
+            current_line = lines[i].strip()
+
+            # 如果当前行以不完整的词结尾（如"制定本"、"根据"等），尝试与下一行合并
+            if (i + 1 < len(lines) and current_line and
+                (current_line.endswith('本') or current_line.endswith('根据') or
+                 current_line.endswith('按照') or current_line.endswith('违反') or
+                 current_line.endswith('依据') or current_line.endswith('遵循'))):
+
+                next_line = lines[i + 1].strip()
+                # 如果下一行不是以"第X条"开头，则合并
+                if next_line and not re.match(r'^第[一二三四五六七八九十百千万\d]+条', next_line):
+                    merged_line = current_line + next_line
+                    fixed_lines.append(merged_line)
+                    i += 2  # 跳过下一行
+                    continue
+
+            fixed_lines.append(current_line)
+            i += 1
+
+        text = '\n'.join(fixed_lines)
 
         # 在序号前添加换行
         text = re.sub(r'(\（[一二三四五六七八九十\d]+\）)', r'\n\1', text)

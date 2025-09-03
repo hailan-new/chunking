@@ -164,9 +164,13 @@ class BaseSplitter(ABC):
                     extract_chunks_finest_granularity(subsections, full_heading)
                 else:
                     # 没有子sections，这是叶子节点，处理其content
+                    # 新逻辑：当content为空时保留heading，否则只保留content
                     if content.strip():
-                        chunk_text = f"{full_heading}\n\n{content}" if heading else content
-                        chunks.append(chunk_text.strip())
+                        # 有内容，只保留content，避免重复
+                        chunks.append(content.strip())
+                    elif heading.strip():
+                        # 没有内容但有标题，保留标题
+                        chunks.append(full_heading.strip())
 
         def extract_chunks_all_levels(section_list: List[Dict[str, Any]], parent_heading: str = ""):
             """所有层级拆分策略：处理所有有内容的节点"""
@@ -179,9 +183,13 @@ class BaseSplitter(ABC):
                 full_heading = f"{parent_heading} > {heading}" if parent_heading else heading
 
                 # 处理当前节点的内容（如果有）
+                # 新逻辑：当content为空时保留heading，否则只保留content
                 if content.strip():
-                    chunk_text = f"{full_heading}\n\n{content}" if heading else content
-                    chunks.append(chunk_text.strip())
+                    # 有内容，只保留content，避免重复
+                    chunks.append(content.strip())
+                elif heading.strip() and not subsections:
+                    # 没有内容但有标题且没有子节点，保留标题
+                    chunks.append(full_heading.strip())
 
                 # 递归处理子sections
                 if subsections:
@@ -197,10 +205,15 @@ class BaseSplitter(ABC):
                 # Create full heading path
                 full_heading = f"{parent_heading} > {heading}" if parent_heading else heading
 
-                if not subsections and content.strip():
-                    # 只有没有子sections且有内容的才处理
-                    chunk_text = f"{full_heading}\n\n{content}" if heading else content
-                    chunks.append(chunk_text.strip())
+                if not subsections:
+                    # 没有子sections，处理当前节点
+                    # 新逻辑：当content为空时保留heading，否则只保留content
+                    if content.strip():
+                        # 有内容，只保留content，避免重复
+                        chunks.append(content.strip())
+                    elif heading.strip():
+                        # 没有内容但有标题，保留标题
+                        chunks.append(full_heading.strip())
                 elif subsections:
                     # 有子sections，递归处理
                     extract_chunks_parent_only(subsections, full_heading)
