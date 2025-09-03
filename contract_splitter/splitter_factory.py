@@ -110,12 +110,65 @@ class SplitterFactory:
         try:
             # 根据splitter类型过滤参数
             filtered_kwargs = self._filter_kwargs_for_splitter(splitter_class, kwargs)
+
+            # 为PDF文件添加法律文档的特殊配置
+            if format_type == 'pdf':
+                # 检查是否是法律文档处理上下文
+                if self._is_legal_document_context(file_path, kwargs):
+                    filtered_kwargs['document_type'] = 'legal'
+                    # 添加法律文档的特殊模式
+                    filtered_kwargs['legal_patterns'] = [
+                        r'^第[一二三四五六七八九十百千万\d]+条\s*',  # 第X条
+                        r'^第[一二三四五六七八九十百千万\d]+章\s*',  # 第X章
+                        r'^第[一二三四五六七八九十百千万\d]+节\s*',  # 第X节
+                        r'^第[一二三四五六七八九十百千万\d]+编\s*',  # 第X编
+                        r'^第[一二三四五六七八九十百千万\d]+篇\s*',  # 第X篇
+                    ]
+                    logger.info("Configured PDF splitter for legal document processing")
+
             splitter = splitter_class(**filtered_kwargs)
             return splitter
         except Exception as e:
             logger.error(f"Failed to create splitter for {format_type} file: {e}")
             raise ValueError(f"Failed to create splitter for {format_type} file: {e}")
-    
+
+    def _is_legal_document_context(self, file_path: str, kwargs: dict) -> bool:
+        """
+        检测是否是法律文档处理上下文
+
+        Args:
+            file_path: 文件路径
+            kwargs: 传入的参数
+
+        Returns:
+            True if this is a legal document context
+        """
+        # 检查调用栈，看是否来自LegalClauseSplitter
+        import inspect
+
+        # 检查调用栈
+        for frame_info in inspect.stack():
+            frame_locals = frame_info.frame.f_locals
+            # 检查是否在LegalClauseSplitter的方法中
+            if 'self' in frame_locals:
+                obj = frame_locals['self']
+                if obj.__class__.__name__ == 'LegalClauseSplitter':
+                    return True
+
+        # 检查文件路径是否包含法律相关关键词
+        legal_keywords = ['law', 'legal', 'regulation', 'rule', 'act', '法', '条例', '规定', '办法', '法律']
+        file_path_lower = file_path.lower()
+
+        for keyword in legal_keywords:
+            if keyword in file_path_lower:
+                return True
+
+        # 检查kwargs中是否有法律文档的标识
+        if kwargs.get('document_type') == 'legal':
+            return True
+
+        return False
+
     def split_document(self, file_path: str, **kwargs) -> List[Dict[str, Any]]:
         """
         Split document using appropriate splitter.

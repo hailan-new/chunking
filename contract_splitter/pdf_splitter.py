@@ -13,23 +13,28 @@ logger = logging.getLogger(__name__)
 class PdfSplitter(BaseSplitter):
     """
     Splitter for structured PDF files using pdfplumber and PyMuPDF.
-    
+
     Extracts document structure from PDF outline/bookmarks or falls back
-    to font-size based heading detection. Supports Chinese PDFs.
+    to font-size based heading detection. Supports Chinese PDFs and legal documents.
     """
-    
-    def __init__(self, max_tokens: int = 2000, overlap: int = 200, 
-                 split_by_sentence: bool = True, token_counter: str = "character"):
+
+    def __init__(self, max_tokens: int = 2000, overlap: int = 200,
+                 split_by_sentence: bool = True, token_counter: str = "character",
+                 document_type: str = "general", legal_patterns: List[str] = None):
         """
         Initialize PDF splitter.
-        
+
         Args:
             max_tokens: Maximum tokens per chunk
             overlap: Overlap length for sliding window
             split_by_sentence: Whether to split at sentence boundaries
             token_counter: Token counting method
+            document_type: Type of document ("general", "legal", "contract")
+            legal_patterns: Custom legal heading patterns for legal documents
         """
         super().__init__(max_tokens, overlap, split_by_sentence, token_counter)
+        self.document_type = document_type
+        self.legal_patterns = legal_patterns or []
         
     def split(self, file_path: str) -> List[Dict[str, Any]]:
         """
@@ -45,11 +50,17 @@ class PdfSplitter(BaseSplitter):
         
         # Try PyMuPDF first for outline extraction
         sections = self._extract_with_pymupdf(file_path)
-        
+
         if not sections:
             # Fallback to pdfplumber with font-based detection
             sections = self._extract_with_pdfplumber(file_path)
-        
+
+        if not sections:
+            # For legal documents, try text pattern recognition
+            if self.document_type == "legal":
+                logger.info("Trying text pattern recognition for legal document")
+                sections = self._extract_by_text_patterns_pymupdf(file_path)
+
         if not sections:
             # Last resort: treat entire PDF as single section
             sections = self._extract_as_single_section(file_path)
@@ -257,45 +268,207 @@ class PdfSplitter(BaseSplitter):
     def _looks_like_heading(self, text: str) -> bool:
         """
         Check if text looks like a heading.
-        
+
         Args:
             text: Text to check
-            
+
         Returns:
             True if text looks like a heading
         """
         import re
-        
+
         # Skip very short or very long text
         if len(text) < 3 or len(text) > 200:
             return False
-        
-        # Chinese heading patterns
+
+        # Legal document patterns (highest priority for legal documents)
+        legal_patterns = [
+            r'^第[一二三四五六七八九十百千万\d]+条\s*',  # 第X条
+            r'^第[一二三四五六七八九十百千万\d]+编\s*',  # 第X编
+            r'^第[一二三四五六七八九十百千万\d]+篇\s*',  # 第X篇
+            r'^第[一二三四五六七八九十百千万\d]+章\s*',  # 第X章
+            r'^第[一二三四五六七八九十百千万\d]+节\s*',  # 第X节
+            r'^第[一二三四五六七八九十百千万\d]+款\s*',  # 第X款
+            r'^第[一二三四五六七八九十百千万\d]+项\s*',  # 第X项
+            r'^（[一二三四五六七八九十百千万\d]+）\s*',  # （X）
+            r'^[一二三四五六七八九十百千万\d]+[、．.]\s*',  # X、
+        ]
+
+        # Custom legal patterns from initialization
+        if self.legal_patterns:
+            legal_patterns.extend(self.legal_patterns)
+
+        # General Chinese heading patterns
         chinese_patterns = [
-            r'^第[一二三四五六七八九十\d]+章',
-            r'^第[一二三四五六七八九十\d]+节',
             r'^[一二三四五六七八九十\d]+[、．.]',
             r'^（[一二三四五六七八九十\d]+）',
         ]
-        
+
         # English heading patterns
         english_patterns = [
             r'^Chapter\s+\d+',
             r'^Section\s+\d+',
+            r'^Article\s+\d+',
             r'^\d+\.?\s+',
             r'^\d+\.\d+\.?\s+',
         ]
-        
-        for pattern in chinese_patterns + english_patterns:
+
+        # For legal documents, prioritize legal patterns
+        if self.document_type == "legal":
+            patterns_to_check = legal_patterns + chinese_patterns + english_patterns
+        else:
+            patterns_to_check = chinese_patterns + english_patterns + legal_patterns
+
+        for pattern in patterns_to_check:
             if re.match(pattern, text, re.IGNORECASE):
                 return True
-        
-        # Check if text doesn't end with sentence punctuation
-        if not text.endswith(('。', '.', '！', '!', '？', '?', '；', ';')):
-            return True
-        
+
+        # Check if text doesn't end with sentence punctuation (lower priority)
+        if not text.endswith(('。', '.', '！', '!', '？', '?', '；', ';', '：', ':')):
+            # For legal documents, be more strict about this rule
+            if self.document_type == "legal":
+                # Only consider as heading if it's short and doesn't look like content
+                return len(text) < 50 and not any(char in text for char in '，,、')
+            else:
+                return True
+
         return False
-    
+
+    def _extract_by_text_patterns(self, doc) -> List[Dict[str, Any]]:
+        """
+        Extract sections by analyzing text patterns when outline is not available.
+        Specifically designed for legal documents.
+
+        Args:
+            doc: PyMuPDF document
+
+        Returns:
+            List of sections with heading and content
+        """
+        import re
+
+        sections = []
+        current_section = None
+
+        # Extract all text with page information
+        full_text = ""
+        page_breaks = []
+
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            page_text = page.get_text()
+            page_breaks.append(len(full_text))
+            full_text += page_text + "\n"
+
+        # Split into lines and analyze
+        lines = full_text.split('\n')
+
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+
+            # Check if this line looks like a heading
+            if self._looks_like_heading(line):
+                # Save previous section
+                if current_section:
+                    sections.append(current_section)
+
+                # Start new section
+                current_section = {
+                    'heading': line,
+                    'content': '',
+                    'level': self._determine_heading_level(line),
+                    'subsections': []
+                }
+            else:
+                # Add to current section content
+                if current_section:
+                    if current_section['content']:
+                        current_section['content'] += '\n' + line
+                    else:
+                        current_section['content'] = line
+                else:
+                    # No current section, create a default one
+                    if not sections:
+                        current_section = {
+                            'heading': '',
+                            'content': line,
+                            'level': 0,
+                            'subsections': []
+                        }
+
+        # Add the last section
+        if current_section:
+            sections.append(current_section)
+
+        return sections
+
+    def _determine_heading_level(self, heading: str) -> int:
+        """
+        Determine the hierarchical level of a heading.
+
+        Args:
+            heading: Heading text
+
+        Returns:
+            Level number (1 = highest, higher numbers = lower levels)
+        """
+        import re
+
+        # Legal document hierarchy
+        if re.match(r'^第[一二三四五六七八九十百千万\d]+编', heading):
+            return 1  # 编
+        elif re.match(r'^第[一二三四五六七八九十百千万\d]+篇', heading):
+            return 2  # 篇
+        elif re.match(r'^第[一二三四五六七八九十百千万\d]+章', heading):
+            return 3  # 章
+        elif re.match(r'^第[一二三四五六七八九十百千万\d]+节', heading):
+            return 4  # 节
+        elif re.match(r'^第[一二三四五六七八九十百千万\d]+条', heading):
+            return 5  # 条
+        elif re.match(r'^第[一二三四五六七八九十百千万\d]+款', heading):
+            return 6  # 款
+        elif re.match(r'^第[一二三四五六七八九十百千万\d]+项', heading):
+            return 7  # 项
+        elif re.match(r'^（[一二三四五六七八九十百千万\d]+）', heading):
+            return 8  # （一）
+        elif re.match(r'^[一二三四五六七八九十百千万\d]+[、．.]', heading):
+            return 9  # 1、
+        else:
+            return 10  # 其他
+
+    def _extract_by_text_patterns_pymupdf(self, file_path: str) -> List[Dict[str, Any]]:
+        """
+        Extract sections using PyMuPDF with text pattern recognition.
+        Specifically for legal documents without outline structure.
+
+        Args:
+            file_path: Path to PDF file
+
+        Returns:
+            List of sections or empty list if extraction fails
+        """
+        try:
+            import fitz  # PyMuPDF
+        except ImportError:
+            logger.warning("PyMuPDF not available for text pattern extraction")
+            return []
+
+        try:
+            doc = fitz.open(file_path)
+            sections = self._extract_by_text_patterns(doc)
+            doc.close()
+
+            if sections:
+                logger.info(f"Extracted {len(sections)} sections using text patterns")
+
+            return sections
+
+        except Exception as e:
+            logger.error(f"Error in text pattern extraction: {e}")
+            return []
+
     def _extract_text_range(self, doc, start_page: int, end_page: int) -> str:
         """
         Extract text from a range of pages.

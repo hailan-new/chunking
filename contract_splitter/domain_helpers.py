@@ -282,36 +282,49 @@ class LegalClauseSplitter:
 
         # 处理每个标记
         for i, match in enumerate(all_matches):
+            # 跳过被标记为None的匹配（已经被合并处理）
+            if match is None:
+                continue
+
             start_pos = match['start']
 
-            # 确定结束位置
-            if i + 1 < len(all_matches):
-                end_pos = all_matches[i + 1]['start']
-            else:
-                end_pos = len(text)
+            # 确定结束位置 - 找到下一个非None的匹配
+            end_pos = len(text)  # 默认到文本结尾
+            for j in range(i + 1, len(all_matches)):
+                if all_matches[j] is not None:
+                    end_pos = all_matches[j]['start']
+                    break
 
             # 提取内容
             content = text[start_pos:end_pos].strip()
 
             if content and len(content) > 10:  # 过滤太短的内容
                 # 对于章节，检查是否应该与下一个条文合并
+                next_match_idx = None
+                for j in range(i + 1, len(all_matches)):
+                    if all_matches[j] is not None:
+                        next_match_idx = j
+                        break
+
                 if (match['type'] == 'chapter' and
-                    i + 1 < len(all_matches) and
-                    all_matches[i + 1]['type'] == 'article' and
-                    all_matches[i + 1]['start'] - match['start'] < 200):  # 章节和条文距离很近
+                    next_match_idx is not None and
+                    all_matches[next_match_idx]['type'] == 'article' and
+                    all_matches[next_match_idx]['start'] - match['start'] < 200):  # 章节和条文距离很近
 
                     # 合并章节和下一个条文
-                    if i + 2 < len(all_matches):
-                        merged_end = all_matches[i + 2]['start']
-                    else:
-                        merged_end = len(text)
+                    # 找到再下一个匹配作为结束位置
+                    merged_end = len(text)
+                    for j in range(next_match_idx + 1, len(all_matches)):
+                        if all_matches[j] is not None:
+                            merged_end = all_matches[j]['start']
+                            break
 
                     merged_content = text[start_pos:merged_end].strip()
                     if merged_content and len(merged_content) > 10:
                         chunks.append(merged_content)
 
                     # 跳过下一个条文（已经合并了）
-                    all_matches[i + 1] = None  # 标记为已处理
+                    all_matches[next_match_idx] = None  # 标记为已处理
                 else:
                     chunks.append(content)
 

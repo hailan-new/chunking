@@ -35,6 +35,18 @@ def find_document_files() -> List[str]:
     return sorted(document_files)
 
 
+def find_wps_files() -> List[str]:
+    """专门查找WPS文件"""
+    wps_files = []
+
+    # 搜索output目录及其子目录下的WPS文件
+    wps_files.extend(glob.glob("output/*.wps"))
+    wps_files.extend(glob.glob("output/*/*.wps"))
+    wps_files.extend(glob.glob("output/*/*/*.wps"))
+
+    return sorted(wps_files)
+
+
 def is_legal_document(file_path: str) -> bool:
     """检测是否为法律文档"""
     file_path_lower = file_path.lower()
