@@ -1,0 +1,42 @@
+{
+  "llm": {
+    "enabled": true,
+    "provider": "qwen",
+    "model": "qwen-plus",
+    "api_key_env": "DASHSCOPE_API_KEY",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "temperature": 0.1,
+    "max_tokens": 1000,
+    "timeout": 30,
+    "retry_times": 3,
+    "batch_size": 20,
+    "max_tokens_per_batch": 3000,
+    "cache_enabled": true
+  },
+  "document": {
+    "max_tokens": 2000,
+    "overlap": 200,
+    "split_by_sentence": true,
+    "token_counter": "character",
+    "chunking_strategy": "finest_granularity",
+    "strict_max_tokens": false
+  },
+  "legal": {
+    "max_tokens": 1500,
+    "overlap": 100,
+    "strict_max_tokens": true,
+    "use_llm_heading_detection": false
+  },
+  "contract": {
+    "max_tokens": 2000,
+    "overlap": 200,
+    "strict_max_tokens": true,
+    "use_llm_heading_detection": false
+  },
+  "regulation": {
+    "max_tokens": 1800,
+    "overlap": 150,
+    "strict_max_tokens": true,
+    "use_llm_heading_detection": true
+  }
+}

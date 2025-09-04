@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 from .base import BaseSplitter
 from .utils import count_tokens, sliding_window_split, clean_text, detect_heading_level
+from .legal_structure_detector import get_legal_detector
 
 # Try to import textract for .doc file support
 try:
@@ -56,10 +57,19 @@ class DocxSplitter(BaseSplitter):
         self.use_llm_heading_detection = use_llm_heading_detection
         self.llm_heading_detector = None
 
+        # 初始化法律结构检测器
+        self.structure_detector = get_legal_detector("legal")
+
         if use_llm_heading_detection:
             try:
                 from .llm_heading_detector import create_llm_heading_detector
-                self.llm_heading_detector = create_llm_heading_detector(**(llm_config or {}))
+                # 如果没有提供llm_config，从全局配置获取
+                if llm_config is None:
+                    from .config import get_config
+                    config = get_config()
+                    llm_config = config.get_llm_config()
+
+                self.llm_heading_detector = create_llm_heading_detector(llm_config)
                 logger.info("LLM heading detection enabled")
             except Exception as e:
                 logger.warning(f"Failed to initialize LLM heading detector: {e}")
@@ -453,35 +463,11 @@ class DocxSplitter(BaseSplitter):
             if not enhanced_element.get('is_heading', False):
                 text = enhanced_element.get('text', '').strip()
 
-                # Additional heading detection patterns
-                heading_patterns = [
-                    r'^第[一二三四五六七八九十\d]+章\s*',  # 第X章
-                    r'^第[一二三四五六七八九十\d]+节\s*',  # 第X节
-                    r'^第[一二三四五六七八九十\d]+条\s*',  # 第X条
-                    r'^[一二三四五六七八九十\d]+、\s*',    # X、
-                    r'^（[一二三四五六七八九十\d]+）\s*',  # （X）
-                    r'^\d+\.\s*',                        # 1.
-                    r'^\d+\.\d+\s*',                     # 1.1
-                ]
-
-                import re
-                for pattern in heading_patterns:
-                    if re.match(pattern, text):
-                        enhanced_element['is_heading'] = True
-                        # Determine level based on pattern
-                        if '章' in pattern:
-                            enhanced_element['level'] = 1
-                        elif '节' in pattern or '条' in pattern:
-                            enhanced_element['level'] = 2
-                        elif '、' in pattern or '（' in pattern:
-                            enhanced_element['level'] = 3
-                        elif re.match(r'^\d+\.', text):
-                            enhanced_element['level'] = 2
-                        elif re.match(r'^\d+\.\d+', text):
-                            enhanced_element['level'] = 3
-                        else:
-                            enhanced_element['level'] = 2
-                        break
+                # Use unified structure detector for heading detection
+                if self.structure_detector.is_legal_heading(text):
+                    enhanced_element['is_heading'] = True
+                    # Determine level using structure detector
+                    enhanced_element['level'] = self.structure_detector.get_heading_level(text)
 
             enhanced_elements.append(enhanced_element)
 

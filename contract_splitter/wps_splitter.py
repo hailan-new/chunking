@@ -64,7 +64,7 @@ class WpsSplitter(BaseSplitter):
         )
 
         # 初始化RTF处理器（用于处理RTF转换结果）
-        self.rtf_processor = RTFProcessor()
+        self.rtf_processor = RTFProcessor("legal")
         
         logger.info("WpsSplitter initialized with WPS conversion support")
     

@@ -144,37 +144,42 @@ def save_law_chunks_to_file(file_name: str, chunks: list, output_dir: Path, orig
 
 def analyze_chunk_structure_in_file(chunks: list, file_handle):
     """在文件中分析chunk结构"""
-    import re
-    
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    from contract_splitter.legal_structure_detector import get_legal_detector, LegalStructureLevel
+
     file_handle.write("\n📈 结构分析\n")
     file_handle.write("-" * 40 + "\n")
-    
+
     # 统计不同类型的chunk
     structure_stats = {
         '章节': 0,    # 第X章
-        '条文': 0,    # 第X条  
+        '条文': 0,    # 第X条
         '款项': 0,    # 第X款
         '序号': 0,    # (一)、(二)
         '普通内容': 0
     }
-    
-    patterns = {
-        '章节': [r'第[一二三四五六七八九十百千万\d]+章', r'第[一二三四五六七八九十百千万\d]+编'],
-        '条文': [r'第[一二三四五六七八九十百千万\d]+条'],
-        '款项': [r'第[一二三四五六七八九十百千万\d]+款', r'第[一二三四五六七八九十百千万\d]+项'],
-        '序号': [r'\（[一二三四五六七八九十\d]+\）', r'\([一二三四五六七八九十\d]+\)']
-    }
+
+    # 使用统一的结构检测器
+    detector = get_legal_detector("legal")
     
     for chunk in chunks:
         chunk_type = '普通内容'
-        for type_name, type_patterns in patterns.items():
-            for pattern in type_patterns:
-                if re.search(pattern, chunk):
-                    chunk_type = type_name
-                    break
-            if chunk_type != '普通内容':
-                break
-        
+
+        # 使用统一的结构检测器判断类型
+        if detector.is_legal_heading(chunk):
+            level = detector.get_heading_level(chunk)
+            if level in [LegalStructureLevel.CHAPTER.value, LegalStructureLevel.BOOK.value, LegalStructureLevel.PART.value]:
+                chunk_type = '章节'
+            elif level == LegalStructureLevel.ARTICLE.value:
+                chunk_type = '条文'
+            elif level in [LegalStructureLevel.CLAUSE.value, LegalStructureLevel.ITEM.value]:
+                chunk_type = '款项'
+            elif level >= LegalStructureLevel.ENUMERATION.value:
+                chunk_type = '序号'
+
         structure_stats[chunk_type] += 1
     
     # 写入统计结果

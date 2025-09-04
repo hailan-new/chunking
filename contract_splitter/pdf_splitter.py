@@ -5,7 +5,8 @@ PDF document splitter for extracting hierarchical sections from structured PDFs.
 from typing import List, Dict, Any, Optional, Tuple
 import logging
 from .base import BaseSplitter
-from .utils import count_tokens, sliding_window_split, clean_text, detect_heading_level
+from .utils import count_tokens, sliding_window_split, clean_text
+from .legal_structure_detector import get_legal_detector
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,10 @@ class PdfSplitter(BaseSplitter):
         super().__init__(max_tokens, overlap, split_by_sentence, token_counter)
         self.document_type = document_type
         self.legal_patterns = legal_patterns or []
+
+        # 初始化法律结构检测器
+        custom_patterns = {'custom_legal': self.legal_patterns} if self.legal_patterns else None
+        self.structure_detector = get_legal_detector(document_type, custom_patterns)
         
     def split(self, file_path: str) -> List[Dict[str, Any]]:
         """
@@ -267,7 +272,7 @@ class PdfSplitter(BaseSplitter):
     
     def _looks_like_heading(self, text: str) -> bool:
         """
-        Check if text looks like a heading.
+        Check if text looks like a heading using unified structure detector.
 
         Args:
             text: Text to check
@@ -275,64 +280,7 @@ class PdfSplitter(BaseSplitter):
         Returns:
             True if text looks like a heading
         """
-        import re
-
-        # Skip very short or very long text
-        if len(text) < 3 or len(text) > 200:
-            return False
-
-        # Legal document patterns (highest priority for legal documents)
-        legal_patterns = [
-            r'^第[一二三四五六七八九十百千万\d]+条\s*',  # 第X条
-            r'^第[一二三四五六七八九十百千万\d]+编\s*',  # 第X编
-            r'^第[一二三四五六七八九十百千万\d]+篇\s*',  # 第X篇
-            r'^第[一二三四五六七八九十百千万\d]+章\s*',  # 第X章
-            r'^第[一二三四五六七八九十百千万\d]+节\s*',  # 第X节
-            r'^第[一二三四五六七八九十百千万\d]+款\s*',  # 第X款
-            r'^第[一二三四五六七八九十百千万\d]+项\s*',  # 第X项
-            r'^（[一二三四五六七八九十百千万\d]+）\s*',  # （X）
-            r'^[一二三四五六七八九十百千万\d]+[、．.]\s*',  # X、
-        ]
-
-        # Custom legal patterns from initialization
-        if self.legal_patterns:
-            legal_patterns.extend(self.legal_patterns)
-
-        # General Chinese heading patterns
-        chinese_patterns = [
-            r'^[一二三四五六七八九十\d]+[、．.]',
-            r'^（[一二三四五六七八九十\d]+）',
-        ]
-
-        # English heading patterns
-        english_patterns = [
-            r'^Chapter\s+\d+',
-            r'^Section\s+\d+',
-            r'^Article\s+\d+',
-            r'^\d+\.?\s+',
-            r'^\d+\.\d+\.?\s+',
-        ]
-
-        # For legal documents, prioritize legal patterns
-        if self.document_type == "legal":
-            patterns_to_check = legal_patterns + chinese_patterns + english_patterns
-        else:
-            patterns_to_check = chinese_patterns + english_patterns + legal_patterns
-
-        for pattern in patterns_to_check:
-            if re.match(pattern, text, re.IGNORECASE):
-                return True
-
-        # Check if text doesn't end with sentence punctuation (lower priority)
-        if not text.endswith(('。', '.', '！', '!', '？', '?', '；', ';', '：', ':')):
-            # For legal documents, be more strict about this rule
-            if self.document_type == "legal":
-                # Only consider as heading if it's short and doesn't look like content
-                return len(text) < 50 and not any(char in text for char in '，,、')
-            else:
-                return True
-
-        return False
+        return self.structure_detector.is_legal_heading(text)
 
     def _extract_by_text_patterns(self, doc) -> List[Dict[str, Any]]:
         """
@@ -406,7 +354,7 @@ class PdfSplitter(BaseSplitter):
 
     def _determine_heading_level(self, heading: str) -> int:
         """
-        Determine the hierarchical level of a heading.
+        Determine the hierarchical level of a heading using unified structure detector.
 
         Args:
             heading: Heading text
@@ -414,29 +362,7 @@ class PdfSplitter(BaseSplitter):
         Returns:
             Level number (1 = highest, higher numbers = lower levels)
         """
-        import re
-
-        # Legal document hierarchy
-        if re.match(r'^第[一二三四五六七八九十百千万\d]+编', heading):
-            return 1  # 编
-        elif re.match(r'^第[一二三四五六七八九十百千万\d]+篇', heading):
-            return 2  # 篇
-        elif re.match(r'^第[一二三四五六七八九十百千万\d]+章', heading):
-            return 3  # 章
-        elif re.match(r'^第[一二三四五六七八九十百千万\d]+节', heading):
-            return 4  # 节
-        elif re.match(r'^第[一二三四五六七八九十百千万\d]+条', heading):
-            return 5  # 条
-        elif re.match(r'^第[一二三四五六七八九十百千万\d]+款', heading):
-            return 6  # 款
-        elif re.match(r'^第[一二三四五六七八九十百千万\d]+项', heading):
-            return 7  # 项
-        elif re.match(r'^（[一二三四五六七八九十百千万\d]+）', heading):
-            return 8  # （一）
-        elif re.match(r'^[一二三四五六七八九十百千万\d]+[、．.]', heading):
-            return 9  # 1、
-        else:
-            return 10  # 其他
+        return self.structure_detector.get_heading_level(heading)
 
     def _extract_by_text_patterns_pymupdf(self, file_path: str) -> List[Dict[str, Any]]:
         """

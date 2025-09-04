@@ -64,10 +64,14 @@ def test_hierarchical_legal_splitting():
 
 def analyze_chunk_structure(chunks, file_name):
     """分析chunk结构"""
-    import re
-    
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    from contract_splitter.legal_structure_detector import get_legal_detector, LegalStructureLevel
+
     print(f"\n📊 {file_name} 结构分析:")
-    
+
     # 统计不同层次的chunk数量
     structure_stats = {
         'chapter': 0,    # 章节
@@ -75,24 +79,23 @@ def analyze_chunk_structure(chunks, file_name):
         'item': 0,       # 序号
         'content': 0     # 普通内容
     }
-    
-    # 层次模式
-    patterns = {
-        'chapter': [r'^第[一二三四五六七八九十百千万\d]+章', r'^第[一二三四五六七八九十百千万\d]+编'],
-        'article': [r'^第[一二三四五六七八九十百千万\d]+条'],
-        'item': [r'^\（[一二三四五六七八九十\d]+\）', r'^\([一二三四五六七八九十\d]+\)']
-    }
+
+    # 使用统一的结构检测器
+    detector = get_legal_detector("legal")
     
     for chunk in chunks:
         chunk_type = 'content'
-        for type_name, type_patterns in patterns.items():
-            for pattern in type_patterns:
-                if re.search(pattern, chunk):
-                    chunk_type = type_name
-                    break
-            if chunk_type != 'content':
-                break
-        
+
+        # 使用统一的结构检测器判断类型
+        if detector.is_legal_heading(chunk):
+            level = detector.get_heading_level(chunk)
+            if level == LegalStructureLevel.CHAPTER.value or level == LegalStructureLevel.BOOK.value:
+                chunk_type = 'chapter'
+            elif level == LegalStructureLevel.ARTICLE.value:
+                chunk_type = 'article'
+            elif level >= LegalStructureLevel.ENUMERATION.value:
+                chunk_type = 'item'
+
         structure_stats[chunk_type] += 1
     
     # 显示统计结果

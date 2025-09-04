@@ -7,6 +7,7 @@ RTF文档处理模块
 import re
 import logging
 from typing import List, Dict, Any
+from .legal_structure_detector import get_legal_detector
 
 try:
     from striprtf.striprtf import rtf_to_text
@@ -20,9 +21,15 @@ logger = logging.getLogger(__name__)
 class RTFProcessor:
     """RTF文档处理器"""
     
-    def __init__(self):
-        """初始化RTF处理器"""
-        pass
+    def __init__(self, document_type: str = "legal"):
+        """
+        初始化RTF处理器
+
+        Args:
+            document_type: 文档类型
+        """
+        self.document_type = document_type
+        self.structure_detector = get_legal_detector(document_type)
     
     def extract_text_from_rtf(self, rtf_file_path: str) -> str:
         """
@@ -244,40 +251,177 @@ class RTFProcessor:
         # 清理文本，添加适当的换行
         cleaned_text = self._clean_extracted_text(text)
 
-        # 简单的分段处理 - 为法律文档优化
-        paragraphs = [p.strip() for p in cleaned_text.split('\n') if p.strip()]
+        # 按法律条文进行智能分割
+        article_sections = self._split_by_articles(cleaned_text)
+        
+        # 如果成功按条文分割，使用条文分割结果
+        if len(article_sections) > 2:  # 至少有标题+一个条文
+            sections.extend(article_sections)
+        else:
+            # 否则使用原有简单分割方法
+            # 简单的分段处理 - 为法律文档优化
+            paragraphs = [p.strip() for p in cleaned_text.split('\n') if p.strip()]
 
-        if paragraphs:
-            # 查找标题（通常包含"管理办法"、"条例"等）
-            title_found = False
-            title_content = ""
-            main_content_parts = []
+            if paragraphs:
+                # 查找标题（通常包含"管理办法"、"条例"等）
+                title_found = False
+                title_content = ""
+                main_content_parts = []
 
-            for para in paragraphs:
-                if not title_found and ('管理办法' in para or '条例' in para or '规定' in para):
-                    title_content = para
-                    title_found = True
-                else:
-                    main_content_parts.append(para)
+                for para in paragraphs:
+                    if not title_found and ('管理办法' in para or '条例' in para or '规定' in para):
+                        title_content = para
+                        title_found = True
+                    else:
+                        main_content_parts.append(para)
 
-            # 添加标题section
+                # 添加标题section
+                if title_content:
+                    sections.append({
+                        'heading': title_content,
+                        'content': title_content,
+                        'subsections': []
+                    })
+
+                # 添加主要内容section
+                if main_content_parts:
+                    main_content = '\n\n'.join(main_content_parts)
+                    sections.append({
+                        'heading': '',
+                        'content': main_content,
+                        'subsections': []
+                    })
+
+        return sections
+
+    def _split_by_articles(self, text: str) -> List[Dict[str, Any]]:
+        """
+        按法律条文进行智能分割
+
+        Args:
+            text: 清理后的文本
+
+        Returns:
+            按条文分割的sections列表
+        """
+        import re
+        
+        sections = []
+        
+        # 查找标题（包含管理办法、条例等）
+        title_match = re.search(r'(.*?)(?:管理办法|条例|规定|办法|细则|规则)', text)
+        title_content = ""
+        if title_match:
+            title_content = title_match.group(0).strip()
             if title_content:
                 sections.append({
                     'heading': title_content,
                     'content': title_content,
                     'subsections': []
                 })
+        
+        # 使用统一的结构识别器提取法律条文
+        legal_sections = self.structure_detector.extract_legal_sections(text)
 
-            # 添加主要内容section
-            if main_content_parts:
-                main_content = '\n\n'.join(main_content_parts)
-                sections.append({
-                    'heading': '',
-                    'content': main_content,
-                    'subsections': []
-                })
+        # 转换为articles格式以保持兼容性
+        articles = []
+        for section in legal_sections:
+            if section['type'] == 'article':  # 只处理条文
+                # 创建一个模拟的match对象
+                class MockMatch:
+                    def __init__(self, heading, content):
+                        self._groups = (heading, content)
 
-        return sections
+                    def groups(self):
+                        return self._groups
+
+                    def group(self, index):
+                        return self._groups[index - 1] if index <= len(self._groups) else ""
+
+                articles.append(MockMatch(section['heading'], section['content']))
+        
+        if articles:
+            article_sections = []
+            for i, match in enumerate(articles):
+                heading = match.group(1).strip() if match.groups() and len(match.groups()) >= 1 else f"条文 {i+1}"
+                content = ""
+                if match.groups() and len(match.groups()) >= 2:
+                    content = (match.group(1) + "\n" + match.group(2)).strip()
+                else:
+                    content = match.group(0).strip()
+                
+                if content and len(content) > 10:  # 过滤太短的内容
+                    article_sections.append({
+                        'heading': heading,
+                        'content': content,
+                        'subsections': []
+                    })
+            
+            # 确保至少有合理的条文分割
+            if len(article_sections) >= 2:
+                sections.extend(article_sections)
+            elif article_sections:
+                # 如果只有一个条文但是内容很长，尝试进一步分割
+                single_section = article_sections[0]
+                if len(single_section['content']) > 500:
+                    # 按段落分割
+                    paragraphs = [p.strip() for p in single_section['content'].split('\n\n') if p.strip()]
+                    if len(paragraphs) > 3:
+                        # 按段落创建多个sections
+                        for i, para in enumerate(paragraphs):
+                            if len(para) > 20:  # 过滤太短的段落
+                                sections.append({
+                                    'heading': f"{single_section['heading']} - 段落 {i+1}",
+                                    'content': para,
+                                    'subsections': []
+                                })
+                    else:
+                        sections.append(single_section)
+                else:
+                    sections.append(single_section)
+        else:
+            # 如果没有找到条文，使用基于段落的分割
+            paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+            if len(paragraphs) > 2:
+                # 检查是否有类似条文的段落
+                article_like_paragraphs = []
+                for i, para in enumerate(paragraphs):
+                    if re.match(r'^第[一二三四五六七八九十百千万\d]+[条章]', para):
+                        article_like_paragraphs.append({
+                            'heading': para.split('\n')[0],  # 第一行作为标题
+                            'content': para,
+                            'subsections': []
+                        })
+                    elif len(para) > 50:  # 过滤太短的段落
+                        article_like_paragraphs.append({
+                            'heading': f"段落 {i+1}",
+                            'content': para,
+                            'subsections': []
+                        })
+                
+                if len(article_like_paragraphs) >= 2:
+                    sections.extend(article_like_paragraphs)
+                else:
+                    # 使用简单的标题+内容结构
+                    if title_content and len(paragraphs) > 1:
+                        main_content = '\n\n'.join(paragraphs[1:])  # 除了标题外的所有内容
+                        if main_content:
+                            sections.append({
+                                'heading': '主要内容',
+                                'content': main_content,
+                                'subsections': []
+                            })
+                    else:
+                        # 没有明显标题，将所有内容作为一个section
+                        all_content = '\n\n'.join(paragraphs)
+                        if all_content:
+                            sections.append({
+                                'heading': '文档内容',
+                                'content': all_content,
+                                'subsections': []
+                            })
+        
+        return sections if sections else []
 
     def _clean_extracted_text(self, text: str) -> str:
         """
@@ -306,12 +450,12 @@ class RTFProcessor:
         text = re.sub(r'按照本(?!\w)', '按照本办法', text)
         text = re.sub(r'违反本(?!\w)', '违反本办法', text)
 
-        # 在重要的法律结构前添加换行
-        text = re.sub(r'(第[一二三四五六七八九十百千万\d]+编)', r'\n\n\1', text)
-        text = re.sub(r'(第[一二三四五六七八九十百千万\d]+篇)', r'\n\n\1', text)
-        text = re.sub(r'(第[一二三四五六七八九十百千万\d]+章)', r'\n\n\1', text)
-        text = re.sub(r'(第[一二三四五六七八九十百千万\d]+节)', r'\n\n\1', text)
-        text = re.sub(r'(第[一二三四五六七八九十百千万\d]+条)', r'\n\n\1', text)
+        # 在重要的法律结构前添加换行 - 使用统一的模式
+        legal_patterns = self.structure_detector.get_all_legal_patterns()
+        for pattern in legal_patterns:
+            # 将模式转换为捕获组形式
+            capture_pattern = f'({pattern.strip("^").strip("\\s*")})'
+            text = re.sub(capture_pattern, r'\n\n\1', text)
 
         # 确保条文内容的完整性 - 修复被错误换行分割的句子
         # 如果一行以不完整的词结尾，尝试与下一行合并
@@ -328,8 +472,8 @@ class RTFProcessor:
                  current_line.endswith('依据') or current_line.endswith('遵循'))):
 
                 next_line = lines[i + 1].strip()
-                # 如果下一行不是以"第X条"开头，则合并
-                if next_line and not re.match(r'^第[一二三四五六七八九十百千万\d]+条', next_line):
+                # 如果下一行不是法律标题，则合并
+                if next_line and not self.structure_detector.is_legal_heading(next_line):
                     merged_line = current_line + next_line
                     fixed_lines.append(merged_line)
                     i += 2  # 跳过下一行

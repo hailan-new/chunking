@@ -37,8 +37,31 @@ from .splitter_factory import SplitterFactory, get_default_factory
 from .utils import count_tokens, sliding_window_split, clean_text
 from .converter import DocumentConverter, convert_doc_to_docx, is_conversion_available
 
+# Import domain helpers
+try:
+    from .domain_helpers import (
+        LegalClauseSplitter,
+        DomainContractSplitter,
+        RegulationSplitter,
+        split_legal_document,
+        split_contract,
+        split_regulation
+    )
+except ImportError:
+    # Domain helpers might not be available in minimal installations
+    pass
+
+# Import configuration system
+try:
+    from .config import Config, get_config, reset_config
+    from .llm_client import create_llm_client
+except ImportError:
+    # Configuration system might not be available
+    pass
+
 # Define what gets imported with "from contract_splitter import *"
 __all__ = [
+    # Core classes
     'SplitterFactory',
     'get_default_factory',
     'ContractSplitter',
@@ -47,13 +70,31 @@ __all__ = [
     'PdfSplitter',
     'WpsSplitter',
     'DocumentConverter',
+
+    # Domain helpers (if available)
+    'LegalClauseSplitter',
+    'DomainContractSplitter',
+    'RegulationSplitter',
+
+    # Utility functions
     'convert_doc_to_docx',
     'is_conversion_available',
     'count_tokens',
     'sliding_window_split',
     'clean_text',
+
+    # Convenience functions
     'split_document',
-    'flatten_sections'
+    'flatten_sections',
+    'split_legal_document',
+    'split_contract',
+    'split_regulation',
+
+    # Configuration (if available)
+    'Config',
+    'get_config',
+    'reset_config',
+    'create_llm_client',
 ]
 
 # Package metadata

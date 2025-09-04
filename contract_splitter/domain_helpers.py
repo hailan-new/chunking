@@ -8,6 +8,7 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 from .base import BaseSplitter
 from .splitter_factory import SplitterFactory
+from .legal_structure_detector import get_legal_detector
 
 logger = logging.getLogger(__name__)
 
@@ -22,22 +23,44 @@ class LegalClauseSplitter:
     - 适合法律文件、法规、条例等
     """
     
-    def __init__(self, 
-                 max_tokens: int = 1500,  # 法律条款通常较长，适当增加限制
-                 overlap: int = 100,
-                 strict_max_tokens: bool = True,  # 法律文件建议严格控制
-                 use_llm_heading_detection: bool = False,
-                 llm_config: dict = None):
+    def __init__(self,
+                 max_tokens: int = None,  # 如果为None，从配置获取
+                 overlap: int = None,
+                 strict_max_tokens: bool = None,
+                 use_llm_heading_detection: bool = None,
+                 llm_config: dict = None,
+                 config_file: str = None):
         """
         初始化法律条款切分器
-        
+
         Args:
-            max_tokens: 最大token数（法律条款建议1500）
-            overlap: 重叠长度
-            strict_max_tokens: 是否严格控制token数
-            use_llm_heading_detection: 是否使用LLM检测标题
-            llm_config: LLM配置
+            max_tokens: 最大token数，如果为None则从配置获取
+            overlap: 重叠长度，如果为None则从配置获取
+            strict_max_tokens: 是否严格控制token数，如果为None则从配置获取
+            use_llm_heading_detection: 是否使用LLM检测标题，如果为None则从配置获取
+            llm_config: LLM配置，如果为None则从配置获取
+            config_file: 配置文件路径
         """
+        # 获取配置
+        from .config import get_config
+        config = get_config(config_file)
+
+        # 获取法律文档配置
+        legal_config = config.get_document_config("legal")
+
+        # 使用参数或配置中的值
+        max_tokens = max_tokens if max_tokens is not None else legal_config.get('max_tokens', 1500)
+        overlap = overlap if overlap is not None else legal_config.get('overlap', 100)
+        strict_max_tokens = strict_max_tokens if strict_max_tokens is not None else legal_config.get('strict_max_tokens', True)
+        use_llm_heading_detection = use_llm_heading_detection if use_llm_heading_detection is not None else legal_config.get('use_llm_heading_detection', False)
+
+        # 如果没有提供llm_config且启用了LLM，从配置获取
+        if llm_config is None and use_llm_heading_detection:
+            llm_config = config.get_llm_config()
+
+        # 初始化法律结构检测器
+        self.structure_detector = get_legal_detector("legal")
+
         # 使用工厂模式支持多种文件格式
         self.factory = SplitterFactory()
         self.splitter_config = {
@@ -573,35 +596,54 @@ class DomainContractSplitter:
     
     def __init__(self,
                  contract_type: str = "general",  # general, service, purchase, employment, etc.
-                 max_tokens: int = 2000,
-                 overlap: int = 200,
-                 strict_max_tokens: bool = True,
-                 use_llm_heading_detection: bool = False,
-                 llm_config: dict = None):
+                 max_tokens: int = None,
+                 overlap: int = None,
+                 strict_max_tokens: bool = None,
+                 use_llm_heading_detection: bool = None,
+                 llm_config: dict = None,
+                 config_file: str = None):
         """
         初始化合同切分器
-        
+
         Args:
             contract_type: 合同类型
-            max_tokens: 最大token数
-            overlap: 重叠长度
-            strict_max_tokens: 是否严格控制token数
-            use_llm_heading_detection: 是否使用LLM检测标题
-            llm_config: LLM配置
+            max_tokens: 最大token数，如果为None则从配置获取
+            overlap: 重叠长度，如果为None则从配置获取
+            strict_max_tokens: 是否严格控制token数，如果为None则从配置获取
+            use_llm_heading_detection: 是否使用LLM检测标题，如果为None则从配置获取
+            llm_config: LLM配置，如果为None则从配置获取
+            config_file: 配置文件路径
         """
         self.contract_type = contract_type
 
+        # 获取配置
+        from .config import get_config
+        global_config = get_config(config_file)
+
+        # 获取合同文档配置
+        contract_config = global_config.get_document_config("contract")
+
         # 根据合同类型调整参数
-        config = self._get_contract_config(contract_type)
+        type_config = self._get_contract_config(contract_type)
+
+        # 使用参数或配置中的值
+        max_tokens = max_tokens if max_tokens is not None else contract_config.get('max_tokens', type_config.get('max_tokens', 2000))
+        overlap = overlap if overlap is not None else contract_config.get('overlap', type_config.get('overlap', 200))
+        strict_max_tokens = strict_max_tokens if strict_max_tokens is not None else contract_config.get('strict_max_tokens', True)
+        use_llm_heading_detection = use_llm_heading_detection if use_llm_heading_detection is not None else contract_config.get('use_llm_heading_detection', False)
+
+        # 如果没有提供llm_config且启用了LLM，从配置获取
+        if llm_config is None and use_llm_heading_detection:
+            llm_config = global_config.get_llm_config()
 
         # 使用工厂模式支持多种文件格式
         self.factory = SplitterFactory()
         self.splitter_config = {
-            'max_tokens': config.get('max_tokens', max_tokens),
-            'overlap': config.get('overlap', overlap),
+            'max_tokens': max_tokens,
+            'overlap': overlap,
             'split_by_sentence': True,
             'token_counter': "character",
-            'chunking_strategy': config.get('strategy', "finest_granularity"),
+            'chunking_strategy': type_config.get('strategy', "finest_granularity"),
             'strict_max_tokens': strict_max_tokens,
             'use_llm_heading_detection': use_llm_heading_detection,
             'llm_config': llm_config
@@ -723,35 +765,54 @@ class RegulationSplitter:
     
     def __init__(self,
                  regulation_type: str = "general",  # general, hr, finance, operation, safety, etc.
-                 max_tokens: int = 1800,
-                 overlap: int = 150,
-                 strict_max_tokens: bool = True,
-                 use_llm_heading_detection: bool = True,  # 规章制度建议使用LLM
-                 llm_config: dict = None):
+                 max_tokens: int = None,
+                 overlap: int = None,
+                 strict_max_tokens: bool = None,
+                 use_llm_heading_detection: bool = None,
+                 llm_config: dict = None,
+                 config_file: str = None):
         """
         初始化规章制度切分器
-        
+
         Args:
             regulation_type: 规章类型
-            max_tokens: 最大token数
-            overlap: 重叠长度
-            strict_max_tokens: 是否严格控制token数
-            use_llm_heading_detection: 是否使用LLM检测标题
-            llm_config: LLM配置
+            max_tokens: 最大token数，如果为None则从配置获取
+            overlap: 重叠长度，如果为None则从配置获取
+            strict_max_tokens: 是否严格控制token数，如果为None则从配置获取
+            use_llm_heading_detection: 是否使用LLM检测标题，如果为None则从配置获取
+            llm_config: LLM配置，如果为None则从配置获取
+            config_file: 配置文件路径
         """
         self.regulation_type = regulation_type
 
+        # 获取配置
+        from .config import get_config
+        global_config = get_config(config_file)
+
+        # 获取规章制度文档配置
+        regulation_config = global_config.get_document_config("regulation")
+
         # 根据规章类型调整参数
-        config = self._get_regulation_config(regulation_type)
+        type_config = self._get_regulation_config(regulation_type)
+
+        # 使用参数或配置中的值
+        max_tokens = max_tokens if max_tokens is not None else regulation_config.get('max_tokens', type_config.get('max_tokens', 1800))
+        overlap = overlap if overlap is not None else regulation_config.get('overlap', type_config.get('overlap', 150))
+        strict_max_tokens = strict_max_tokens if strict_max_tokens is not None else regulation_config.get('strict_max_tokens', True)
+        use_llm_heading_detection = use_llm_heading_detection if use_llm_heading_detection is not None else regulation_config.get('use_llm_heading_detection', True)
+
+        # 如果没有提供llm_config且启用了LLM，从配置获取
+        if llm_config is None and use_llm_heading_detection:
+            llm_config = global_config.get_llm_config()
 
         # 使用工厂模式支持多种文件格式
         self.factory = SplitterFactory()
         self.splitter_config = {
-            'max_tokens': config.get('max_tokens', max_tokens),
-            'overlap': config.get('overlap', overlap),
+            'max_tokens': max_tokens,
+            'overlap': overlap,
             'split_by_sentence': True,
             'token_counter': "character",
-            'chunking_strategy': config.get('strategy', "finest_granularity"),
+            'chunking_strategy': type_config.get('strategy', "finest_granularity"),
             'strict_max_tokens': strict_max_tokens,
             'use_llm_heading_detection': use_llm_heading_detection,
             'llm_config': llm_config

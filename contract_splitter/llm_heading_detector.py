@@ -214,16 +214,22 @@ class LLMHeadingDetector:
     def _call_llm(self, prompt: str) -> str:
         """
         调用LLM API
-        
+
         Args:
             prompt: 提示字符串
-            
+
         Returns:
             LLM响应
         """
-        # 这里需要根据具体的LLM客户端实现
+        # 使用新的统一客户端接口
+        from .llm_client import BaseLLMClient
+
+        if isinstance(self.llm_client, BaseLLMClient):
+            return self.llm_client.generate_with_retry(prompt)
+
+        # 向后兼容：支持旧的客户端接口
         # 示例：OpenAI GPT
-        if hasattr(self.llm_client, 'chat'):
+        elif hasattr(self.llm_client, 'chat'):
             response = self.llm_client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}],
@@ -231,7 +237,7 @@ class LLMHeadingDetector:
                 max_tokens=1000
             )
             return response.choices[0].message.content
-        
+
         # 示例：Claude
         elif hasattr(self.llm_client, 'messages'):
             response = self.llm_client.messages.create(
@@ -241,10 +247,14 @@ class LLMHeadingDetector:
                 messages=[{"role": "user", "content": prompt}]
             )
             return response.content[0].text
-        
+
         # 通用接口
-        else:
+        elif hasattr(self.llm_client, 'generate'):
             return self.llm_client.generate(prompt)
+
+        # 最后的回退
+        else:
+            return str(self.llm_client(prompt))
     
     def _parse_llm_response(self, response: str, expected_count: int) -> List[Dict[str, Any]]:
         """
@@ -353,39 +363,60 @@ class LLMHeadingDetector:
 
 
 # 工厂函数
-def create_llm_heading_detector(llm_type: str = "openai", **kwargs) -> LLMHeadingDetector:
+def create_llm_heading_detector(llm_config: dict = None, **kwargs) -> LLMHeadingDetector:
     """
     创建LLM标题检测器
-    
+
     Args:
-        llm_type: LLM类型 ("openai", "claude", "custom")
-        **kwargs: 其他参数
-        
+        llm_config: LLM配置字典，如果为None则从全局配置获取
+        **kwargs: 其他参数（向后兼容）
+
     Returns:
         LLM标题检测器实例
     """
+    # 向后兼容：支持旧的参数格式
+    if llm_config is None and kwargs:
+        llm_config = kwargs
+
+    # 如果仍然没有配置，从全局配置获取
+    if llm_config is None:
+        from .config import get_config
+        config = get_config()
+        llm_config = config.get_llm_config()
+
+    # 创建LLM客户端
     llm_client = None
-    
-    if llm_type == "openai":
+    if llm_config.get('enabled', False):
         try:
-            import openai
-            llm_client = openai.OpenAI(api_key=kwargs.get('api_key'))
-        except ImportError:
-            logger.warning("OpenAI library not installed")
-    
-    elif llm_type == "claude":
-        try:
-            import anthropic
-            llm_client = anthropic.Anthropic(api_key=kwargs.get('api_key'))
-        except ImportError:
-            logger.warning("Anthropic library not installed")
-    
-    elif llm_type == "custom":
-        llm_client = kwargs.get('client')
-    
+            from .llm_client import create_llm_client
+            llm_client = create_llm_client(llm_config)
+        except Exception as e:
+            logger.warning(f"Failed to create LLM client: {e}")
+
+    # 向后兼容：支持旧的llm_type参数
+    if llm_client is None and 'llm_type' in kwargs:
+        llm_type = kwargs.get('llm_type', 'openai')
+
+        if llm_type == "openai":
+            try:
+                import openai
+                llm_client = openai.OpenAI(api_key=kwargs.get('api_key'))
+            except ImportError:
+                logger.warning("OpenAI library not installed")
+
+        elif llm_type == "claude":
+            try:
+                import anthropic
+                llm_client = anthropic.Anthropic(api_key=kwargs.get('api_key'))
+            except ImportError:
+                logger.warning("Anthropic library not installed")
+
+        elif llm_type == "custom":
+            llm_client = kwargs.get('client')
+
     return LLMHeadingDetector(
         llm_client=llm_client,
-        max_tokens_per_batch=kwargs.get('max_tokens_per_batch', 3000),
-        max_texts_per_batch=kwargs.get('max_texts_per_batch', 20),
-        cache_enabled=kwargs.get('cache_enabled', True)
+        max_tokens_per_batch=llm_config.get('max_tokens_per_batch', kwargs.get('max_tokens_per_batch', 3000)),
+        max_texts_per_batch=llm_config.get('batch_size', kwargs.get('max_texts_per_batch', 20)),
+        cache_enabled=llm_config.get('cache_enabled', kwargs.get('cache_enabled', True))
     )
