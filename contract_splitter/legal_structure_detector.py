@@ -255,9 +255,10 @@ class LegalStructureDetector:
         # 构建统一的匹配模式
         pattern_groups = []
         for pattern_str, level in all_patterns:
-            # 移除模式中的^和\s*以便在文本中间也能匹配
-            clean_pattern = pattern_str.replace('^', '').replace('\\s*', '')
-            pattern_groups.append(f"({clean_pattern})")
+            # 安全地清理模式：保持正则表达式语法完整性
+            clean_pattern = self._clean_pattern_for_search(pattern_str)
+            if clean_pattern:  # 只添加有效的模式
+                pattern_groups.append(f"({clean_pattern})")
 
         if not pattern_groups:
             return []
@@ -272,7 +273,8 @@ class LegalStructureDetector:
             
             # 确定匹配的层级
             for i, (pattern_str, level) in enumerate(all_patterns):
-                if re.match(pattern_str, matched_text, re.IGNORECASE):
+                # 使用原始模式进行匹配验证
+                if self._pattern_matches_text(pattern_str, matched_text):
                     matches.append({
                         'start': start_pos,
                         'text': matched_text,
@@ -307,7 +309,63 @@ class LegalStructureDetector:
             })
         
         return sections
-    
+
+    def _clean_pattern_for_search(self, pattern_str: str) -> str:
+        """
+        安全地清理正则表达式模式以用于搜索
+
+        Args:
+            pattern_str: 原始正则表达式模式
+
+        Returns:
+            清理后的模式，如果无法安全清理则返回空字符串
+        """
+        try:
+            # 移除行首锚点 ^
+            if pattern_str.startswith('^'):
+                pattern_str = pattern_str[1:]
+
+            # 安全地移除末尾的 \s*
+            if pattern_str.endswith('\\s*'):
+                pattern_str = pattern_str[:-3]
+
+            # 验证清理后的模式是否有效
+            import re
+            re.compile(pattern_str)
+            return pattern_str
+
+        except re.error:
+            # 如果清理后的模式无效，返回原始模式（不进行清理）
+            try:
+                import re
+                re.compile(pattern_str)
+                return pattern_str
+            except re.error:
+                # 如果原始模式也无效，返回空字符串
+                logger.warning(f"Invalid regex pattern: {pattern_str}")
+                return ""
+
+    def _pattern_matches_text(self, pattern_str: str, text: str) -> bool:
+        """
+        检查模式是否匹配文本
+
+        Args:
+            pattern_str: 正则表达式模式
+            text: 待匹配的文本
+
+        Returns:
+            是否匹配
+        """
+        try:
+            import re
+            # 如果模式以^开头，使用match；否则使用search
+            if pattern_str.startswith('^'):
+                return bool(re.match(pattern_str, text, re.IGNORECASE))
+            else:
+                return bool(re.search(pattern_str, text, re.IGNORECASE))
+        except re.error:
+            return False
+
     def clean_legal_text(self, text: str) -> str:
         """
         清理法律文本

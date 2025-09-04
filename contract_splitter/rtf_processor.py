@@ -453,9 +453,16 @@ class RTFProcessor:
         # 在重要的法律结构前添加换行 - 使用统一的模式
         legal_patterns = self.structure_detector.get_all_legal_patterns()
         for pattern in legal_patterns:
-            # 将模式转换为捕获组形式
-            capture_pattern = f'({pattern.strip("^").strip("\\s*")})'
-            text = re.sub(capture_pattern, r'\n\n\1', text)
+            try:
+                # 安全地清理模式并转换为捕获组形式
+                clean_pattern = self.structure_detector._clean_pattern_for_search(pattern)
+                if clean_pattern:
+                    capture_pattern = f'({clean_pattern})'
+                    text = re.sub(capture_pattern, r'\n\n\1', text)
+            except Exception as e:
+                # 如果模式有问题，跳过这个模式
+                logger.warning(f"跳过有问题的正则表达式模式: {pattern}, 错误: {e}")
+                continue
 
         # 确保条文内容的完整性 - 修复被错误换行分割的句子
         # 如果一行以不完整的词结尾，尝试与下一行合并
