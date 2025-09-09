@@ -33,7 +33,8 @@ from .base import ContractSplitter, BaseSplitter
 from .docx_splitter import DocxSplitter
 from .pdf_splitter import PdfSplitter
 from .wps_splitter import WpsSplitter
-from .splitter_factory import SplitterFactory, get_default_factory
+from .splitter_factory import SplitterFactory
+from .simple_chunker import SimpleChunker, simple_chunk_file, simple_chunk_text
 from .utils import count_tokens, sliding_window_split, clean_text
 from .converter import DocumentConverter, convert_doc_to_docx, is_conversion_available
 
@@ -70,6 +71,9 @@ __all__ = [
     'PdfSplitter',
     'WpsSplitter',
     'DocumentConverter',
+    'SimpleChunker',
+    'simple_chunk_file',
+    'simple_chunk_text',
 
     # Domain helpers (if available)
     'LegalClauseSplitter',
