@@ -44,16 +44,26 @@ class PdfSplitter(BaseSplitter):
     def split(self, file_path: str) -> List[Dict[str, Any]]:
         """
         Split PDF document into hierarchical sections.
-        
+
         Args:
             file_path: Path to the PDF file
-            
+
         Returns:
             List of hierarchical section dictionaries
         """
         self.validate_file(file_path, ['.pdf'])
-        
-        # Try PyMuPDF first for outline extraction
+
+        # 对于法律文档，优先使用文本模式识别
+        if self.document_type == "legal":
+            logger.info("Legal document detected, using text pattern recognition first")
+            sections = self._extract_by_text_patterns_pymupdf(file_path)
+
+            if sections and len(sections) > 5:  # 如果识别到足够多的结构
+                logger.info(f"Using text pattern results: {len(sections)} sections")
+                # 直接使用文本模式识别的结果，进行过滤和清理
+                return self._filter_and_clean_sections(sections)
+
+        # 原有的处理逻辑作为fallback
         sections = self._extract_with_pymupdf(file_path)
 
         if not sections:
@@ -69,11 +79,14 @@ class PdfSplitter(BaseSplitter):
         if not sections:
             # Last resort: treat entire PDF as single section
             sections = self._extract_as_single_section(file_path)
-        
+
         # Apply size constraints and splitting
         sections = self._apply_size_constraints(sections)
-        
-        return sections
+
+        # 扁平化sections，确保返回有内容的chunks
+        flattened_sections = self._flatten_sections(sections)
+
+        return flattened_sections
     
     def _extract_with_pymupdf(self, file_path: str) -> List[Dict[str, Any]]:
         """
@@ -595,3 +608,74 @@ class PdfSplitter(BaseSplitter):
             'level': section.get('level', 1),
             'subsections': processed_subsections
         }
+
+    def _flatten_sections(self, sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        扁平化sections，确保返回有内容的chunks
+
+        Args:
+            sections: 层次化的sections列表
+
+        Returns:
+            扁平化的sections列表，只包含有内容的chunks
+        """
+        result = []
+
+        for section in sections:
+            content = section.get('content', '')
+            subsections = section.get('subsections', [])
+
+            # 如果父section有内容，添加它
+            if content.strip():
+                result.append({
+                    'heading': section.get('heading', ''),
+                    'content': content,
+                    'level': section.get('level', 1),
+                    'subsections': []
+                })
+
+            # 递归处理子sections
+            if subsections:
+                result.extend(self._flatten_sections(subsections))
+
+        return result
+
+    def _filter_and_clean_sections(self, sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        过滤和清理sections，移除空的或过短的sections
+
+        Args:
+            sections: 原始sections列表
+
+        Returns:
+            过滤后的sections列表
+        """
+        result = []
+
+        for section in sections:
+            content = section.get('content', '').strip()
+            heading = section.get('heading', '').strip()
+
+            # 过滤条件
+            if len(content) < 10 and len(heading) < 5:  # 太短的跳过
+                continue
+
+            if not content and not heading:  # 完全空的跳过
+                continue
+
+            # 合并标题和内容
+            if heading and content:
+                full_content = f"{heading}\n{content}"
+            elif heading:
+                full_content = heading
+            else:
+                full_content = content
+
+            result.append({
+                'heading': heading,
+                'content': full_content,
+                'level': section.get('level', 1),
+                'subsections': []
+            })
+
+        return result

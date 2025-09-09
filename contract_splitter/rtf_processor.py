@@ -42,35 +42,76 @@ class RTFProcessor:
             提取的纯文本
         """
         try:
-            # 首先尝试使用专业的RTF解析库
+            # 读取RTF内容
+            with open(rtf_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                rtf_content = f.read()
+
+            extracted_texts = []
+            
+            # 方法1：尝试使用专业的RTF解析库
             if RTF_PARSER_AVAILABLE:
                 try:
-                    with open(rtf_file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        rtf_content = f.read()
-
                     # 使用striprtf库解析
                     text = rtf_to_text(rtf_content)
 
                     if text and len(text.strip()) > 100:
                         # 清理和规范化文本
                         cleaned_text = self._clean_extracted_text(text.strip())
+                        extracted_texts.append(('striprtf', cleaned_text, len(cleaned_text)))
                         logger.info(f"使用striprtf库提取文本成功，长度: {len(cleaned_text)} 字符")
-                        return cleaned_text
                     else:
-                        logger.warning("striprtf库提取的内容不足，尝试备用方法")
+                        logger.warning("striprtf库提取的内容不足")
 
                 except Exception as e:
-                    logger.warning(f"striprtf库解析失败: {e}，尝试备用方法")
+                    logger.warning(f"striprtf库解析失败: {e}")
 
-            # 备用方法：自定义解析
-            with open(rtf_file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                rtf_content = f.read()
+            # 方法2：自定义解析
+            try:
+                text = self._parse_rtf_content(rtf_content)
+                if text and len(text.strip()) > 50:
+                    cleaned_text = self._clean_extracted_text(text.strip())
+                    extracted_texts.append(('custom_parser', cleaned_text, len(cleaned_text)))
+                    logger.info(f"自定义解析提取文本成功，长度: {len(cleaned_text)} 字符")
+            except Exception as e:
+                logger.warning(f"自定义解析失败: {e}")
 
-            # 提取RTF中的文本内容
-            text = self._parse_rtf_content(rtf_content)
+            # 方法3：直接文本提取（针对中文内容）
+            try:
+                text = self._simple_text_extraction(rtf_content)
+                if text and len(text.strip()) > 50:
+                    cleaned_text = self._clean_extracted_text(text.strip())
+                    extracted_texts.append(('direct_extraction', cleaned_text, len(cleaned_text)))
+                    logger.info(f"直接文本提取成功，长度: {len(cleaned_text)} 字符")
+            except Exception as e:
+                logger.warning(f"直接文本提取失败: {e}")
 
-            logger.info(f"从RTF文件提取文本成功，长度: {len(text)} 字符")
-            return text
+            # 选择最佳的提取结果
+            if extracted_texts:
+                # 优先选择包含更多中文字符的结果
+                best_text = ""
+                best_score = -1
+                
+                for method, text, length in extracted_texts:
+                    # 计算中文字符比例作为评分
+                    chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+                    total_chars = len(text)
+                    chinese_ratio = chinese_chars / total_chars if total_chars > 0 else 0
+                    
+                    # 计算有效内容评分（中文字符数 + 换行数）
+                    score = chinese_chars + text.count('\n') * 2
+                    
+                    logger.info(f"提取方法 {method}: 长度={length}, 中文字符={chinese_chars}, 中文比例={chinese_ratio:.2f}, 评分={score}")
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_text = text
+                
+                if best_text:
+                    logger.info(f"选择最佳提取结果，评分: {best_score}")
+                    return best_text
+
+            logger.warning("所有RTF提取方法都未能获得有效内容")
+            return ""
 
         except Exception as e:
             logger.error(f"RTF文件处理失败: {e}")
@@ -222,17 +263,26 @@ class RTFProcessor:
         
         text = re.sub(r"\\\'([0-9a-fA-F]{2})", replace_hex, text)
         
-        # 处理常见的RTF转义字符
-        try:
-            text = re.sub(r'\\par\s*', '\n', text)
-            text = re.sub(r'\\line\s*', '\n', text)
-            text = re.sub(r'\\tab\s*', '\t', text)
-            text = re.sub(r'\\\\', '\\', text)
-            text = re.sub(r'\\\{', '{', text)
-            text = re.sub(r'\\\}', '}', text)
-        except re.error as e:
-            logger.warning(f"RTF转义字符处理失败: {e}")
-            pass
+        # 处理常见的RTF转义字符（安全处理每个替换）
+        escape_replacements = [
+            (r'\\par\s*', '\n'),
+            (r'\\line\s*', '\n'),
+            (r'\\tab\s*', '\t'),
+            (r'\\\\', '\\\\'),  # 双反斜杠替换为单反斜杠
+            (r'\\\{', '{'),
+            (r'\\\}', '}')
+        ]
+        
+        for pattern, replacement in escape_replacements:
+            try:
+                # 对于反斜杠替换，使用更安全的方法
+                if pattern == r'\\\\':
+                    text = text.replace('\\\\', '\\')
+                else:
+                    text = re.sub(pattern, replacement, text)
+            except re.error as e:
+                logger.warning(f"RTF转义字符处理失败 pattern='{pattern}': {e}")
+                continue
         
         return text
     
@@ -309,16 +359,19 @@ class RTFProcessor:
         sections = []
         
         # 查找标题（包含管理办法、条例等）
-        title_match = re.search(r'(.*?)(?:管理办法|条例|规定|办法|细则|规则)', text)
         title_content = ""
-        if title_match:
-            title_content = title_match.group(0).strip()
-            if title_content:
-                sections.append({
-                    'heading': title_content,
-                    'content': title_content,
-                    'subsections': []
-                })
+        try:
+            title_match = re.search(r'(.*?)(?:管理办法|条例|规定|办法|细则|规则)', text)
+            if title_match:
+                title_content = title_match.group(0).strip()
+                if title_content:
+                    sections.append({
+                        'heading': title_content,
+                        'content': title_content,
+                        'subsections': []
+                    })
+        except re.error as e:
+            logger.warning(f"标题匹配失败: {e}")
         
         # 使用统一的结构识别器提取法律条文
         legal_sections = self.structure_detector.extract_legal_sections(text)
@@ -386,18 +439,28 @@ class RTFProcessor:
                 # 检查是否有类似条文的段落
                 article_like_paragraphs = []
                 for i, para in enumerate(paragraphs):
-                    if re.match(r'^第[一二三四五六七八九十百千万\d]+[条章]', para):
-                        article_like_paragraphs.append({
-                            'heading': para.split('\n')[0],  # 第一行作为标题
-                            'content': para,
-                            'subsections': []
-                        })
-                    elif len(para) > 50:  # 过滤太短的段落
-                        article_like_paragraphs.append({
-                            'heading': f"段落 {i+1}",
-                            'content': para,
-                            'subsections': []
-                        })
+                    try:
+                        if re.match(r'^第[一二三四五六七八九十百千万\d]+[条章]', para):
+                            article_like_paragraphs.append({
+                                'heading': para.split('\n')[0],  # 第一行作为标题
+                                'content': para,
+                                'subsections': []
+                            })
+                        elif len(para) > 50:  # 过滤太短的段落
+                            article_like_paragraphs.append({
+                                'heading': f"段落 {i+1}",
+                                'content': para,
+                                'subsections': []
+                            })
+                    except re.error as e:
+                        logger.warning(f"段落匹配失败: {e}")
+                        # 即使匹配失败，也添加长段落
+                        if len(para) > 50:
+                            article_like_paragraphs.append({
+                                'heading': f"段落 {i+1}",
+                                'content': para,
+                                'subsections': []
+                            })
                 
                 if len(article_like_paragraphs) >= 2:
                     sections.extend(article_like_paragraphs)
@@ -458,7 +521,13 @@ class RTFProcessor:
                 clean_pattern = self.structure_detector._clean_pattern_for_search(pattern)
                 if clean_pattern:
                     capture_pattern = f'({clean_pattern})'
-                    text = re.sub(capture_pattern, r'\n\n\1', text)
+                    # 验证捕获组模式是否有效
+                    try:
+                        re.compile(capture_pattern)
+                        text = re.sub(capture_pattern, r'\n\n\1', text)
+                    except re.error as e:
+                        logger.warning(f"无效的捕获组模式: {capture_pattern}, 错误: {e}")
+                        continue
             except Exception as e:
                 # 如果模式有问题，跳过这个模式
                 logger.warning(f"跳过有问题的正则表达式模式: {pattern}, 错误: {e}")
@@ -492,12 +561,26 @@ class RTFProcessor:
         text = '\n'.join(fixed_lines)
 
         # 在序号前添加换行
-        text = re.sub(r'(\（[一二三四五六七八九十\d]+\）)', r'\n\1', text)
-        text = re.sub(r'(\([一二三四五六七八九十\d]+\))', r'\n\1', text)
+        try:
+            text = re.sub(r'(\（[一二三四五六七八九十\d]+\）)', r'\n\1', text)
+        except re.error as e:
+            logger.warning(f"序号前换行处理失败 (全角括号): {e}")
+        
+        try:
+            text = re.sub(r'(\([一二三四五六七八九十\d]+\))', r'\n\1', text)
+        except re.error as e:
+            logger.warning(f"序号前换行处理失败 (半角括号): {e}")
 
         # 在"前款"、"本条"等引用前添加换行，但要避免破坏条文的完整性
-        text = re.sub(r'(?<!\w)(前款)', r'\n\1', text)  # 前款前面不是字母数字时才换行
-        text = re.sub(r'(?<!\w)(本条)', r'\n\1', text)   # 本条前面不是字母数字时才换行
+        try:
+            text = re.sub(r'(?<!\w)(前款)', r'\n\1', text)  # 前款前面不是字母数字时才换行
+        except re.error as e:
+            logger.warning(f"前款换行处理失败: {e}")
+        
+        try:
+            text = re.sub(r'(?<!\w)(本条)', r'\n\1', text)   # 本条前面不是字母数字时才换行
+        except re.error as e:
+            logger.warning(f"本条换行处理失败: {e}")
         # 不对"本办法"添加换行，因为它经常出现在条文中间
 
         # 清理多余的空白和换行
