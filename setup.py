@@ -63,6 +63,8 @@ setup(
         "PyMuPDF>=1.20.0",
         "striprtf>=0.0.26",  # RTF processing for WPS files
         "requests>=2.25.0",  # For WPS API support
+        "openpyxl>=3.0.0",  # Excel processing
+        "xlrd>=2.0.0",  # Legacy Excel support
     ],
     extras_require={
         "tiktoken": ["tiktoken>=0.4.0"],

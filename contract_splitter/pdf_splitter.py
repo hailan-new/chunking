@@ -679,3 +679,50 @@ class PdfSplitter(BaseSplitter):
             })
 
         return result
+
+    def extract_text(self, file_path: str) -> str:
+        """
+        Extract plain text from PDF document efficiently
+
+        Args:
+            file_path: Path to the PDF file
+
+        Returns:
+            Extracted plain text content
+        """
+        self.validate_file(file_path, ['.pdf'])
+
+        try:
+            # Use PyMuPDF for fast text extraction
+            import fitz
+
+            text_parts = []
+            doc = fitz.open(file_path)
+
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                text = page.get_text()
+                if text.strip():
+                    text_parts.append(text.strip())
+
+            doc.close()
+            return '\n'.join(text_parts)
+
+        except ImportError:
+            # Fallback to pdfplumber
+            try:
+                import pdfplumber
+
+                text_parts = []
+                with pdfplumber.open(file_path) as pdf:
+                    for page in pdf.pages:
+                        text = page.extract_text()
+                        if text and text.strip():
+                            text_parts.append(text.strip())
+
+                return '\n'.join(text_parts)
+
+            except ImportError:
+                # Final fallback: use split method
+                logger.warning("No PDF libraries available, using split method for text extraction")
+                return super().extract_text(file_path)

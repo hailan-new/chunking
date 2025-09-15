@@ -12,6 +12,7 @@ from .base import BaseSplitter
 from .docx_splitter import DocxSplitter
 from .pdf_splitter import PdfSplitter
 from .wps_splitter import WpsSplitter
+from .excel_splitter import ExcelSplitter
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,11 @@ class SplitterFactory:
         'doc': DocxSplitter,  # DOC files are handled by DocxSplitter with conversion
         'pdf': PdfSplitter,
         'wps': WpsSplitter,
+        'xlsx': ExcelSplitter,
+        'xls': ExcelSplitter,
+        'xlsm': ExcelSplitter,
+        'xltx': ExcelSplitter,
+        'xltm': ExcelSplitter,
     }
     
     # 支持的文件格式
@@ -182,6 +188,19 @@ class SplitterFactory:
         """
         splitter = self.create_splitter(file_path, **kwargs)
         return splitter.split(file_path)
+
+    def extract_text(self, file_path: str) -> str:
+        """
+        Extract plain text from document using appropriate splitter
+
+        Args:
+            file_path: Path to the document file
+
+        Returns:
+            Extracted plain text content
+        """
+        splitter = self.create_splitter(file_path)
+        return splitter.extract_text(file_path)
     
     def split_and_flatten(self, file_path: str, **kwargs) -> List[Dict[str, Any]]:
         """

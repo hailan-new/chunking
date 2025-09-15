@@ -655,3 +655,88 @@ class DocxSplitter(BaseSplitter):
                 processed_sections.append(section)
 
         return processed_sections
+
+    def extract_text(self, file_path: str) -> str:
+        """
+        Extract plain text from DOCX document efficiently
+
+        Args:
+            file_path: Path to the DOCX file
+
+        Returns:
+            Extracted plain text content
+        """
+        self.validate_file(file_path, ['.docx', '.doc'])
+
+        try:
+            # Try python-docx first for best results
+            from docx import Document
+
+            doc = Document(file_path)
+            text_parts = []
+
+            # Extract paragraphs
+            for paragraph in doc.paragraphs:
+                text = paragraph.text.strip()
+                if text:
+                    text_parts.append(text)
+
+            # Extract tables
+            for table in doc.tables:
+                for row in table.rows:
+                    row_texts = []
+                    for cell in row.cells:
+                        cell_text = cell.text.strip()
+                        if cell_text:
+                            row_texts.append(cell_text)
+                    if row_texts:
+                        text_parts.append(' | '.join(row_texts))
+
+            return '\n'.join(text_parts)
+
+        except ImportError:
+            # Fallback to ZIP extraction
+            try:
+                return self._extract_text_as_zip(file_path)
+            except Exception:
+                # Final fallback: use split method
+                logger.warning("No DOCX libraries available, using split method for text extraction")
+                return super().extract_text(file_path)
+
+    def _extract_text_as_zip(self, file_path: str) -> str:
+        """
+        Extract text from DOCX by treating it as ZIP file
+
+        Args:
+            file_path: Path to the DOCX file
+
+        Returns:
+            Extracted text content
+        """
+        import zipfile
+        import xml.etree.ElementTree as ET
+
+        text_parts = []
+
+        with zipfile.ZipFile(file_path, 'r') as zip_file:
+            # Read document.xml
+            if 'word/document.xml' in zip_file.namelist():
+                with zip_file.open('word/document.xml') as doc_file:
+                    tree = ET.parse(doc_file)
+                    root = tree.getroot()
+
+                    # Extract text from paragraphs
+                    for para in root.iter():
+                        if para.tag.endswith('}p'):  # paragraph
+                            para_texts = []
+                            for text_elem in para.iter():
+                                if text_elem.tag.endswith('}t'):  # text
+                                    if text_elem.text:
+                                        para_texts.append(text_elem.text)
+
+                            if para_texts:
+                                text = ''.join(para_texts).strip()
+                                if text:
+                                    text_parts.append(text)
+
+        return '\n'.join(text_parts)

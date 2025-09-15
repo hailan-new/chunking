@@ -45,10 +45,10 @@ class BaseSplitter(ABC):
     def split(self, file_path: str) -> List[Dict[str, Any]]:
         """
         Split document into hierarchical sections.
-        
+
         Args:
             file_path: Path to the document file
-            
+
         Returns:
             List of section dictionaries with structure:
             {
@@ -59,6 +59,49 @@ class BaseSplitter(ABC):
             }
         """
         pass
+
+    def extract_text(self, file_path: str) -> str:
+        """
+        Extract plain text from document
+
+        Args:
+            file_path: Path to the document file
+
+        Returns:
+            Extracted plain text content
+        """
+        # Default implementation: split then merge
+        sections = self.split(file_path)
+        return self._extract_text_from_sections(sections)
+
+    def _extract_text_from_sections(self, sections: List[Dict[str, Any]]) -> str:
+        """
+        Extract text content from sections recursively
+
+        Args:
+            sections: List of section dictionaries
+
+        Returns:
+            Combined text content
+        """
+        text_parts = []
+
+        for section in sections:
+            # Add heading if present
+            if section.get('heading'):
+                text_parts.append(section['heading'])
+
+            # Add content if present
+            if section.get('content'):
+                text_parts.append(section['content'])
+
+            # Recursively process subsections
+            if section.get('subsections'):
+                subsection_text = self._extract_text_from_sections(section['subsections'])
+                if subsection_text:
+                    text_parts.append(subsection_text)
+
+        return '\n'.join(text_parts)
 
     @classmethod
     def detect_file_format(cls, file_path: str) -> str:

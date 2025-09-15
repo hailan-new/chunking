@@ -123,6 +123,8 @@ class SimpleChunker:
                 return self._extract_from_rtf(file_path)
             elif file_ext == '.txt':
                 return self._extract_from_txt(file_path)
+            elif file_ext in ['.xlsx', '.xls', '.xlsm', '.xltx', '.xltm']:
+                return self._extract_from_excel(file_path)
             else:
                 logger.warning(f"Unsupported file type: {file_ext}")
                 return ""
@@ -254,6 +256,24 @@ class SimpleChunker:
         except Exception as e:
             logger.error(f"Error extracting TXT: {e}")
             return ""
+
+    def _extract_from_excel(self, file_path: str) -> str:
+        """从Excel提取文本"""
+        try:
+            from contract_splitter.excel_processor import ExcelProcessor
+
+            processor = ExcelProcessor()
+            text = processor.extract_text(file_path, extract_mode="legal_content")
+
+            if text:
+                return text
+            else:
+                logger.warning(f"Failed to extract text from Excel file: {file_path}")
+                return ""
+
+        except Exception as e:
+            logger.error(f"Error extracting Excel: {e}")
+            return ""
     
     def _chunk_text(self, text: str) -> List[Dict[str, Any]]:
         """
@@ -356,7 +376,11 @@ class SimpleChunker:
     
     def _get_file_type(self, file_path: str) -> str:
         """获取文件类型"""
-        return Path(file_path).suffix.lower().lstrip('.')
+        ext = Path(file_path).suffix.lower().lstrip('.')
+        # 统一Excel格式
+        if ext in ['xlsx', 'xls', 'xlsm', 'xltx', 'xltm']:
+            return 'excel'
+        return ext
 
 
 # 便捷函数接口

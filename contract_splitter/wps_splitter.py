@@ -290,6 +290,36 @@ class WpsSplitter(BaseSplitter):
             }
         }
 
+    def extract_text(self, file_path: str) -> str:
+        """
+        Extract plain text from WPS document efficiently
+
+        Args:
+            file_path: Path to the WPS file
+
+        Returns:
+            Extracted plain text content
+        """
+        self.validate_file(file_path, ['.wps'])
+
+        logger.info(f"Processing WPS file: {file_path}")
+
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # Convert WPS to DOCX
+                docx_file = self.wps_processor.convert_to_docx(file_path, temp_dir)
+
+                if not docx_file or not os.path.exists(docx_file):
+                    raise ValueError(f"Failed to convert WPS file: {file_path}")
+
+                # Extract text from converted DOCX
+                return self.docx_splitter.extract_text(docx_file)
+
+        except Exception as e:
+            logger.error(f"Failed to extract text from WPS file {file_path}: {e}")
+            # Fallback to split method
+            return super().extract_text(file_path)
+
 
 # 便捷函数
 def split_wps_document(file_path: str, max_tokens: int = 2000, 

@@ -97,13 +97,20 @@ class LegalClauseSplitter:
         # 使用层次化分割
         sections = splitter.split(file_path)
 
-        # 对于法律文档，不使用标准的flatten，而是直接提取文本进行重新切分
+        # 对于法律文档，使用改进的句子优先分块
         full_text = self._extract_full_text_from_sections(sections)
 
-        # 按法律条文重新切分
-        processed_chunks = self._split_legal_text_by_articles(full_text)
+        # 使用句子优先的分块策略，保持句子完整性
+        from .utils import sliding_window_split
+        processed_chunks = sliding_window_split(
+            full_text,
+            max_tokens=self.splitter_config.get('max_tokens', 1500),
+            overlap=int(self.splitter_config.get('max_tokens', 1500) * 0.1),  # 10% overlap
+            by_sentence=True,  # 优先保持句子完整性
+            token_counter="character"
+        )
 
-        # 后处理：修复被错误截断的条文
+        # 后处理：修复被错误截断的条文（现在应该很少需要）
         fixed_chunks = self._fix_truncated_articles(processed_chunks)
 
         logger.info(f"Legal document split into {len(fixed_chunks)} chunks")

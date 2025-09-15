@@ -22,7 +22,7 @@ from contract_splitter.utils import (
  
 def find_document_files() -> List[str]:
     """查找output目录下的所有支持格式的文档"""
-    supported_extensions = ['*.doc', '*.docx', '*.pdf', '*.wps']
+    supported_extensions = ['*.doc', '*.docx', '*.pdf', '*.wps', '*.xlsx', '*.xls', '*.xlsm']
     document_files = []
 
     for ext in supported_extensions:

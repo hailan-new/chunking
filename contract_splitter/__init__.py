@@ -33,7 +33,8 @@ from .base import ContractSplitter, BaseSplitter
 from .docx_splitter import DocxSplitter
 from .pdf_splitter import PdfSplitter
 from .wps_splitter import WpsSplitter
-from .splitter_factory import SplitterFactory
+from .excel_splitter import ExcelSplitter
+from .splitter_factory import SplitterFactory, get_default_factory
 from .simple_chunker import SimpleChunker, simple_chunk_file, simple_chunk_text
 from .utils import count_tokens, sliding_window_split, clean_text
 from .converter import DocumentConverter, convert_doc_to_docx, is_conversion_available
@@ -70,6 +71,7 @@ __all__ = [
     'DocxSplitter',
     'PdfSplitter',
     'WpsSplitter',
+    'ExcelSplitter',
     'DocumentConverter',
     'SimpleChunker',
     'simple_chunk_file',
@@ -90,6 +92,8 @@ __all__ = [
     # Convenience functions
     'split_document',
     'flatten_sections',
+    'simple_chunk_file',
+    'extract_text',
     'split_legal_document',
     'split_contract',
     'split_regulation',
@@ -155,13 +159,13 @@ def split_document(file_path: str, max_tokens: int = 2000, overlap: int = 200,
     Convenience function to quickly split a document using automatic format detection.
 
     Args:
-        file_path: Path to the document file (.docx, .doc, .pdf, .wps)
+        file_path: Path to the document file (.docx, .doc, .pdf, .wps, .xlsx, .xls, .xlsm)
         max_tokens: Maximum tokens per chunk
         overlap: Overlap length for sliding window
         split_by_sentence: Whether to split at sentence boundaries
         token_counter: Token counting method ("character" or "tiktoken")
         strict_max_tokens: Whether to strictly enforce max_tokens limit
-        **kwargs: Additional arguments passed to the splitter
+        **kwargs: Additional arguments passed to the splitter (e.g., extract_mode for Excel)
 
     Returns:
         List of flattened text chunks ready for LLM ingestion
@@ -199,6 +203,43 @@ def flatten_sections(sections, max_tokens: int = 2000, overlap: int = 200,
         token_counter=token_counter
     )
     return splitter.flatten(sections)
+
+
+def simple_chunk_file(file_path: str, max_chunk_size: int = 800, overlap_ratio: float = 0.1):
+    """
+    Simple chunking function for any supported file format.
+
+    Args:
+        file_path: Path to the file
+        max_chunk_size: Maximum chunk size in characters
+        overlap_ratio: Overlap ratio between chunks (0.0 to 0.5)
+
+    Returns:
+        List of chunk dictionaries with 'content' and metadata
+    """
+    chunker = SimpleChunker(max_chunk_size=max_chunk_size, overlap_ratio=overlap_ratio)
+    return chunker.chunk_file(file_path)
+
+
+def extract_text(file_path: str) -> str:
+    """
+    Extract plain text from any supported document format.
+
+    This is the core text extraction interface that automatically detects
+    the file format and uses the appropriate extractor.
+
+    Args:
+        file_path: Path to the document file
+
+    Returns:
+        Extracted plain text content
+
+    Raises:
+        FileNotFoundError: If file doesn't exist
+        ValueError: If file format is not supported
+    """
+    factory = get_default_factory()
+    return factory.extract_text(file_path)
 
 # Version check function
 def check_dependencies():

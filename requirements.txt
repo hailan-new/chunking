@@ -7,6 +7,11 @@ PyMuPDF>=1.20.0              # Alternative PDF library with outline support
 striprtf>=0.0.26             # RTF processing for WPS files
 requests>=2.25.0             # HTTP client for WPS API support
 
+# Excel processing
+openpyxl>=3.0.0              # For .xlsx and .xlsm file processing
+xlrd>=2.0.0                  # For .xls file processing (legacy Excel)
+pandas>=1.4.0                # Alternative Excel processing and data handling
+
 # Optional dependencies for enhanced functionality
 tiktoken>=0.4.0              # OpenAI's tokenizer for accurate token counting
 docx2txt>=0.8                # Alternative text extraction for problematic files

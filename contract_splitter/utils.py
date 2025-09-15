@@ -36,74 +36,114 @@ def count_tokens(text: str, method: str = "character") -> int:
 
 def split_chinese_sentences(text: str) -> List[str]:
     """
-    Split Chinese text into sentences using Chinese punctuation.
-    
+    Split Chinese text into sentences using Chinese punctuation, preserving sentence integrity.
+
     Args:
         text: Input Chinese text
-        
+
     Returns:
-        List of sentences
+        List of complete sentences with punctuation
     """
+    if not text.strip():
+        return []
+
     # Chinese sentence endings: 。！？；
     # Also include English punctuation for mixed content
-    sentence_pattern = r'[。！？；.!?;]\s*'
-    sentences = re.split(sentence_pattern, text)
-    
-    # Remove empty sentences and strip whitespace
-    sentences = [s.strip() for s in sentences if s.strip()]
-    
+    sentence_endings = ['。', '！', '？', '；', '.', '!', '?', ';']
+
+    sentences = []
+    current_sentence = ""
+
+    for char in text:
+        current_sentence += char
+
+        # Check if this character is a sentence ending
+        if char in sentence_endings:
+            # Look ahead to see if there are quotes or brackets that should be included
+            remaining_text = text[len(''.join(sentences)) + len(current_sentence):]
+
+            # Include closing quotes/brackets that immediately follow
+            quote_bracket_chars = ['"', '"', '）', ')', '】', ']', '》', '>']
+            while remaining_text and remaining_text[0] in quote_bracket_chars:
+                current_sentence += remaining_text[0]
+                remaining_text = remaining_text[1:]
+
+            # Add the complete sentence
+            if current_sentence.strip():
+                sentences.append(current_sentence.strip())
+            current_sentence = ""
+
+    # Add any remaining text as the last sentence
+    if current_sentence.strip():
+        sentences.append(current_sentence.strip())
+
+    # Filter out very short fragments (likely punctuation artifacts)
+    sentences = [s for s in sentences if len(s.strip()) > 2]
+
     return sentences
 
 
-def split_by_natural_breakpoints(text: str, max_tokens: int, 
+def split_by_natural_breakpoints(text: str, max_tokens: int,
                                 token_counter: str = "character") -> List[str]:
     """
-    Split text by natural breakpoints (sentences, paragraphs).
-    
+    Split text by natural breakpoints (sentences, paragraphs), prioritizing complete sentences.
+
     Args:
         text: Input text
-        max_tokens: Maximum tokens per chunk
+        max_tokens: Target maximum tokens per chunk (soft limit for sentence integrity)
         token_counter: Token counting method
-        
+
     Returns:
-        List of text chunks
+        List of text chunks with complete sentences
     """
     chunks = []
-    
+
     # First try to split by paragraphs
     paragraphs = text.split('\n\n')
-    
+
     for paragraph in paragraphs:
         paragraph = paragraph.strip()
         if not paragraph:
             continue
-            
+
         if count_tokens(paragraph, token_counter) <= max_tokens:
             chunks.append(paragraph)
         else:
-            # Split paragraph by sentences
+            # Split paragraph by sentences with sentence priority
             sentences = split_chinese_sentences(paragraph)
-            current_chunk = ""
-            
+            current_chunk_sentences = []
+            current_chunk_tokens = 0
+
             for sentence in sentences:
-                test_chunk = f"{current_chunk} {sentence}".strip()
-                
-                if count_tokens(test_chunk, token_counter) <= max_tokens:
-                    current_chunk = test_chunk
+                sentence_tokens = count_tokens(sentence, token_counter)
+
+                # Check if adding this sentence would exceed the limit
+                if current_chunk_sentences and (current_chunk_tokens + sentence_tokens > max_tokens):
+                    # Complete current chunk with full sentences
+                    chunk_text = " ".join(current_chunk_sentences)
+                    chunks.append(chunk_text)
+
+                    # Start new chunk
+                    current_chunk_sentences = [sentence]
+                    current_chunk_tokens = sentence_tokens
                 else:
-                    if current_chunk:
-                        chunks.append(current_chunk)
-                    current_chunk = sentence
-                    
-                    # If single sentence is too long, force split
-                    if count_tokens(current_chunk, token_counter) > max_tokens:
-                        force_chunks = force_split_text(current_chunk, max_tokens, token_counter)
-                        chunks.extend(force_chunks[:-1])
-                        current_chunk = force_chunks[-1] if force_chunks else ""
-            
-            if current_chunk:
-                chunks.append(current_chunk)
-    
+                    # Add sentence to current chunk
+                    current_chunk_sentences.append(sentence)
+                    current_chunk_tokens += sentence_tokens
+
+                # Handle extremely long single sentences
+                if len(current_chunk_sentences) == 1 and current_chunk_tokens > max_tokens * 1.5:
+                    # Keep the long sentence as a complete chunk to maintain integrity
+                    chunk_text = " ".join(current_chunk_sentences)
+                    chunks.append(chunk_text)
+                    current_chunk_sentences = []
+                    current_chunk_tokens = 0
+
+            # Add remaining sentences as final chunk
+            if current_chunk_sentences:
+                chunk_text = " ".join(current_chunk_sentences)
+                chunks.append(chunk_text)
+
     return chunks
 
 
@@ -149,17 +189,17 @@ def sliding_window_split(text: str, max_tokens: int, overlap: int,
                         by_sentence: bool = True,
                         token_counter: str = "character") -> List[str]:
     """
-    Split text using sliding window with overlap, respecting document structure.
+    Split text using sliding window with overlap, prioritizing complete sentences.
 
     Args:
         text: Input text
-        max_tokens: Maximum tokens per chunk
+        max_tokens: Maximum tokens per chunk (soft limit when by_sentence=True)
         overlap: Overlap length (in tokens or characters)
-        by_sentence: Whether to respect sentence boundaries
+        by_sentence: Whether to respect sentence boundaries (prioritized over max_tokens)
         token_counter: Token counting method
 
     Returns:
-        List of overlapping text chunks
+        List of overlapping text chunks with complete sentences
     """
     if count_tokens(text, token_counter) <= max_tokens:
         return [text]
@@ -171,43 +211,12 @@ def sliding_window_split(text: str, max_tokens: int, overlap: int,
     chunks = []
 
     if by_sentence:
-        # Split by natural breakpoints first
-        natural_chunks = split_by_natural_breakpoints(text, max_tokens, token_counter)
-
-        # Apply sliding window with overlap
-        for i, chunk in enumerate(natural_chunks):
-            if i == 0:
-                chunks.append(chunk)
-            else:
-                # Calculate overlap with previous chunk
-                prev_chunk = chunks[-1]
-
-                # Try to find overlap at sentence level
-                prev_sentences = split_chinese_sentences(prev_chunk)
-                curr_sentences = split_chinese_sentences(chunk)
-
-                # Take last few sentences from previous chunk as overlap
-                overlap_sentences = []
-                overlap_tokens = 0
-
-                for sentence in reversed(prev_sentences):
-                    test_overlap = " ".join([sentence] + overlap_sentences)
-                    if count_tokens(test_overlap, token_counter) <= overlap:
-                        overlap_sentences.insert(0, sentence)
-                        overlap_tokens = count_tokens(test_overlap, token_counter)
-                    else:
-                        break
-
-                # Combine overlap with current chunk
-                if overlap_sentences:
-                    overlapped_chunk = " ".join(overlap_sentences + curr_sentences)
-                    chunks.append(overlapped_chunk)
-                else:
-                    chunks.append(chunk)
+        # Use enhanced sentence-aware splitting that prioritizes complete sentences
+        return _sentence_priority_split(text, max_tokens, overlap, token_counter)
     else:
         # Simple sliding window without sentence boundaries
         step_size = max_tokens - overlap
-        
+
         if token_counter == "character":
             for i in range(0, len(text), step_size):
                 chunk = text[i:i + max_tokens]
@@ -217,7 +226,7 @@ def sliding_window_split(text: str, max_tokens: int, overlap: int,
                 import tiktoken
                 encoding = tiktoken.get_encoding("cl100k_base")
                 tokens = encoding.encode(text)
-                
+
                 for i in range(0, len(tokens), step_size):
                     chunk_tokens = tokens[i:i + max_tokens]
                     chunk_text = encoding.decode(chunk_tokens)
@@ -227,7 +236,87 @@ def sliding_window_split(text: str, max_tokens: int, overlap: int,
                 for i in range(0, len(text), step_size):
                     chunk = text[i:i + max_tokens]
                     chunks.append(chunk)
-    
+
+    return chunks
+
+
+def _sentence_priority_split(text: str, max_tokens: int, overlap: int, token_counter: str) -> List[str]:
+    """
+    Enhanced sentence-aware splitting that prioritizes complete sentences over strict token limits.
+
+    Args:
+        text: Input text
+        max_tokens: Target maximum tokens per chunk (soft limit)
+        overlap: Overlap length
+        token_counter: Token counting method
+
+    Returns:
+        List of chunks with complete sentences
+    """
+    # Split text into sentences first
+    sentences = split_chinese_sentences(text)
+
+    if not sentences:
+        return [text]
+
+    chunks = []
+    current_chunk_sentences = []
+    current_chunk_tokens = 0
+
+    i = 0
+    while i < len(sentences):
+        sentence = sentences[i]
+        sentence_tokens = count_tokens(sentence, token_counter)
+
+        # Check if adding this sentence would exceed the soft limit
+        if current_chunk_sentences and (current_chunk_tokens + sentence_tokens > max_tokens):
+            # Complete current chunk with full sentences
+            chunk_text = " ".join(current_chunk_sentences)
+            chunks.append(chunk_text)
+
+            # Start new chunk with overlap
+            if overlap > 0 and current_chunk_sentences:
+                # Calculate overlap sentences from the end of current chunk
+                overlap_sentences = []
+                overlap_tokens = 0
+
+                for j in range(len(current_chunk_sentences) - 1, -1, -1):
+                    test_sentence = current_chunk_sentences[j]
+                    test_tokens = count_tokens(test_sentence, token_counter)
+
+                    if overlap_tokens + test_tokens <= overlap:
+                        overlap_sentences.insert(0, test_sentence)
+                        overlap_tokens += test_tokens
+                    else:
+                        break
+
+                # Start new chunk with overlap sentences
+                current_chunk_sentences = overlap_sentences[:]
+                current_chunk_tokens = overlap_tokens
+            else:
+                current_chunk_sentences = []
+                current_chunk_tokens = 0
+
+        # Add current sentence to chunk
+        current_chunk_sentences.append(sentence)
+        current_chunk_tokens += sentence_tokens
+
+        # Handle extremely long single sentences
+        if len(current_chunk_sentences) == 1 and current_chunk_tokens > max_tokens * 1.5:
+            # This single sentence is too long, but we still keep it as a complete chunk
+            # to maintain sentence integrity
+            chunk_text = " ".join(current_chunk_sentences)
+            chunks.append(chunk_text)
+            current_chunk_sentences = []
+            current_chunk_tokens = 0
+
+        i += 1
+
+    # Add remaining sentences as final chunk
+    if current_chunk_sentences:
+        chunk_text = " ".join(current_chunk_sentences)
+        chunks.append(chunk_text)
+
     return chunks
 
 
