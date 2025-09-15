@@ -399,7 +399,7 @@ class ExcelSplitter(BaseSplitter):
         logger.info(f"提取Excel文本: {file_path}")
 
         # 直接使用ExcelProcessor提取文本，不进行分割处理
-        text_content = self.excel_processor.extract_text(file_path, mode="all_content")
+        text_content = self.excel_processor.extract_text(file_path, extract_mode="all_content")
 
         if not text_content:
             logger.warning(f"Excel文件无内容: {file_path}")

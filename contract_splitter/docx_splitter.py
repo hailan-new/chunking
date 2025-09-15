@@ -658,16 +658,61 @@ class DocxSplitter(BaseSplitter):
 
     def extract_text(self, file_path: str) -> str:
         """
-        Extract plain text from DOCX document efficiently
+        Extract plain text from DOCX/DOC document efficiently
+        Uses the same tested logic as split method for consistency
 
         Args:
-            file_path: Path to the DOCX file
+            file_path: Path to the DOCX or DOC file
 
         Returns:
             Extracted plain text content
         """
-        self.validate_file(file_path, ['.docx', '.doc'])
+        self.validate_file(file_path, ['.docx', '.doc', '.rtf'])
 
+        # Use the same logic as split method for consistency
+        try:
+            sections = self.split(file_path)
+            return self._extract_text_from_sections(sections)
+        except Exception as e:
+            logger.warning(f"Split-based extraction failed: {e}, trying direct extraction")
+
+            # Fallback to direct extraction methods
+            if file_path.lower().endswith('.doc'):
+                return self._extract_text_from_doc(file_path)
+            elif file_path.lower().endswith('.rtf'):
+                return self._extract_text_from_rtf(file_path)
+            else:
+                return self._extract_text_from_docx_direct(file_path)
+
+    def _extract_text_from_sections(self, sections: List[Dict[str, Any]]) -> str:
+        """
+        Extract text content from sections list recursively
+
+        Args:
+            sections: List of section dictionaries
+
+        Returns:
+            Combined text content
+        """
+        text_parts = []
+
+        for section in sections:
+            # Add section content
+            if 'content' in section and section['content']:
+                text_parts.append(section['content'])
+
+            # Recursively process subsections
+            if 'subsections' in section and section['subsections']:
+                subsection_text = self._extract_text_from_sections(section['subsections'])
+                if subsection_text:
+                    text_parts.append(subsection_text)
+
+        return '\n'.join(text_parts)
+
+    def _extract_text_from_docx_direct(self, file_path: str) -> str:
+        """
+        Direct DOCX text extraction as fallback
+        """
         try:
             # Try python-docx first for best results
             from docx import Document
@@ -702,6 +747,188 @@ class DocxSplitter(BaseSplitter):
                 # Final fallback: use split method
                 logger.warning("No DOCX libraries available, using split method for text extraction")
                 return super().extract_text(file_path)
+        except Exception as e:
+            # If python-docx fails, try ZIP extraction
+            try:
+                return self._extract_text_as_zip(file_path)
+            except Exception:
+                # Final fallback: use split method
+                logger.warning(f"DOCX extraction failed: {e}, using split method for text extraction")
+                return super().extract_text(file_path)
+
+    def _extract_text_from_doc(self, file_path: str) -> str:
+        """
+        Extract text from legacy DOC file using multiple methods
+
+        Args:
+            file_path: Path to the DOC file
+
+        Returns:
+            Extracted text content
+        """
+        # Method 1: Try docx2txt (works with some DOC files)
+        try:
+            import docx2txt
+            text = docx2txt.process(file_path)
+            if text and text.strip():
+                return text.strip()
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+        # Method 2: Try python-docx (sometimes works with DOC files)
+        try:
+            from docx import Document
+            doc = Document(file_path)
+            text_parts = []
+
+            for paragraph in doc.paragraphs:
+                text = paragraph.text.strip()
+                if text:
+                    text_parts.append(text)
+
+            if text_parts:
+                return '\n'.join(text_parts)
+        except Exception:
+            pass
+
+        # Method 3: Try antiword (if available)
+        try:
+            import subprocess
+            result = subprocess.run(['antiword', file_path],
+                                  capture_output=True, text=True, timeout=30)
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+            pass
+        except Exception:
+            pass
+
+        # Method 4: Try LibreOffice conversion
+        try:
+            import tempfile
+            import subprocess
+            import os
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # Convert DOC to DOCX using LibreOffice
+                cmd = ['soffice', '--headless', '--convert-to', 'docx',
+                       '--outdir', temp_dir, file_path]
+                result = subprocess.run(cmd, capture_output=True, timeout=60)
+
+                if result.returncode == 0:
+                    # Find the converted file
+                    base_name = os.path.splitext(os.path.basename(file_path))[0]
+                    docx_file = os.path.join(temp_dir, f"{base_name}.docx")
+
+                    if os.path.exists(docx_file):
+                        # Extract text from converted DOCX
+                        from docx import Document
+                        doc = Document(docx_file)
+                        text_parts = []
+
+                        for paragraph in doc.paragraphs:
+                            text = paragraph.text.strip()
+                            if text:
+                                text_parts.append(text)
+
+                        if text_parts:
+                            return '\n'.join(text_parts)
+        except Exception:
+            pass
+
+        # Final fallback: use split method
+        logger.warning(f"All DOC extraction methods failed for {file_path}, using split method")
+        return super().extract_text(file_path)
+
+    def _extract_text_from_rtf(self, file_path: str) -> str:
+        """
+        Extract text from RTF file using multiple methods
+
+        Args:
+            file_path: Path to the RTF file
+
+        Returns:
+            Extracted text content
+        """
+        # Method 1: Try striprtf library (best for RTF)
+        try:
+            from striprtf.striprtf import rtf_to_text
+            with open(file_path, 'r', encoding='utf-8') as f:
+                rtf_content = f.read()
+            text = rtf_to_text(rtf_content)
+            if text and text.strip():
+                return text.strip()
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+        # Method 2: Try LibreOffice conversion
+        try:
+            import tempfile
+            import subprocess
+            import os
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # Convert RTF to DOCX using LibreOffice
+                cmd = ['soffice', '--headless', '--convert-to', 'docx',
+                       '--outdir', temp_dir, file_path]
+                result = subprocess.run(cmd, capture_output=True, timeout=60)
+
+                if result.returncode == 0:
+                    # Find the converted file
+                    base_name = os.path.splitext(os.path.basename(file_path))[0]
+                    docx_file = os.path.join(temp_dir, f"{base_name}.docx")
+
+                    if os.path.exists(docx_file):
+                        # Extract text from converted DOCX
+                        from docx import Document
+                        doc = Document(docx_file)
+                        text_parts = []
+
+                        for paragraph in doc.paragraphs:
+                            text = paragraph.text.strip()
+                            if text:
+                                text_parts.append(text)
+
+                        if text_parts:
+                            return '\n'.join(text_parts)
+        except Exception:
+            pass
+
+        # Method 3: Simple regex-based RTF parsing
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                rtf_content = f.read()
+
+            # Basic RTF text extraction using regex
+            import re
+
+            # Remove RTF header and font table
+            text = re.sub(r'\\rtf\d+.*?\\f\d+\\fs\d+\s*', '', rtf_content)
+
+            # Remove RTF control words and groups
+            text = re.sub(r'\\[a-z]+\d*\s?', '', text)  # Remove control words
+            text = re.sub(r'[{}]', '', text)  # Remove braces
+            text = re.sub(r'\\[^a-z]', '', text)  # Remove escape sequences
+            text = re.sub(r'\\par\s*', '\n', text)  # Convert \par to newlines
+            text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
+            text = re.sub(r' +\n', '\n', text)  # Clean up line endings
+            text = re.sub(r'\n+', '\n', text)  # Remove multiple newlines
+
+            # Clean up remaining artifacts
+            text = re.sub(r'^[^a-zA-Z\u4e00-\u9fff]*', '', text)  # Remove leading non-text
+
+            if text and text.strip():
+                return text.strip()
+        except Exception:
+            pass
+
+        # Final fallback: use split method
+        logger.warning(f"All RTF extraction methods failed for {file_path}, using split method")
+        return super().extract_text(file_path)
 
     def _extract_text_as_zip(self, file_path: str) -> str:
         """

@@ -29,6 +29,7 @@ class SplitterFactory:
     FORMAT_SPLITTER_MAP = {
         'docx': DocxSplitter,
         'doc': DocxSplitter,  # DOC files are handled by DocxSplitter with conversion
+        'rtf': DocxSplitter,  # RTF files are handled by DocxSplitter
         'pdf': PdfSplitter,
         'wps': WpsSplitter,
         'xlsx': ExcelSplitter,

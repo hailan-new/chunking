@@ -683,6 +683,7 @@ class PdfSplitter(BaseSplitter):
     def extract_text(self, file_path: str) -> str:
         """
         Extract plain text from PDF document efficiently
+        Uses the same tested logic as split method for consistency
 
         Args:
             file_path: Path to the PDF file
@@ -692,6 +693,46 @@ class PdfSplitter(BaseSplitter):
         """
         self.validate_file(file_path, ['.pdf'])
 
+        # Use the same text extraction logic as split method for consistency
+        try:
+            # For legal documents, try text pattern recognition first
+            if self.document_type == "legal":
+                sections = self._extract_by_text_patterns_pymupdf(file_path)
+                if sections and len(sections) > 1:
+                    return self._extract_text_from_sections(sections)
+
+            # Try PyMuPDF with outline/bookmark support
+            sections = self._extract_with_pymupdf(file_path)
+            if sections:
+                return self._extract_text_from_sections(sections)
+
+            # Fallback to pdfplumber
+            sections = self._extract_with_pdfplumber(file_path)
+            if sections:
+                return self._extract_text_from_sections(sections)
+
+            # For legal documents, try text pattern recognition as fallback
+            if self.document_type == "legal":
+                sections = self._extract_by_text_patterns_pymupdf(file_path)
+                if sections:
+                    return self._extract_text_from_sections(sections)
+
+            # Last resort: extract as single section
+            sections = self._extract_as_single_section(file_path)
+            if sections:
+                return self._extract_text_from_sections(sections)
+
+            # If all else fails, use simple page-by-page extraction
+            return self._simple_text_extraction(file_path)
+
+        except Exception as e:
+            logger.warning(f"PDF text extraction failed: {e}, using simple extraction")
+            return self._simple_text_extraction(file_path)
+
+    def _simple_text_extraction(self, file_path: str) -> str:
+        """
+        Simple page-by-page text extraction as final fallback
+        """
         try:
             # Use PyMuPDF for fast text extraction
             import fitz
@@ -726,3 +767,28 @@ class PdfSplitter(BaseSplitter):
                 # Final fallback: use split method
                 logger.warning("No PDF libraries available, using split method for text extraction")
                 return super().extract_text(file_path)
+
+    def _extract_text_from_sections(self, sections: List[Dict[str, Any]]) -> str:
+        """
+        Extract text content from sections list recursively
+
+        Args:
+            sections: List of section dictionaries
+
+        Returns:
+            Combined text content
+        """
+        text_parts = []
+
+        for section in sections:
+            # Add section content
+            if 'content' in section and section['content']:
+                text_parts.append(section['content'])
+
+            # Recursively process subsections
+            if 'subsections' in section and section['subsections']:
+                subsection_text = self._extract_text_from_sections(section['subsections'])
+                if subsection_text:
+                    text_parts.append(subsection_text)
+
+        return '\n'.join(text_parts)
