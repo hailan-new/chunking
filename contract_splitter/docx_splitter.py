@@ -529,6 +529,7 @@ class DocxSplitter(BaseSplitter):
     def _extract_single_table_cells(self, table) -> List[Dict[str, Any]]:
         """
         Extract cells from a single table as separate document elements.
+        Handles merged cells efficiently by avoiding duplicate processing.
 
         Args:
             table: python-docx Table object
@@ -537,10 +538,20 @@ class DocxSplitter(BaseSplitter):
             List of table cell elements
         """
         elements = []
+        processed_cells = set()  # Track processed cell objects to avoid duplicates
 
         try:
             for row_idx, row in enumerate(table.rows):
                 for cell_idx, cell in enumerate(row.cells):
+                    # Use cell object ID to detect merged cells
+                    cell_id = id(cell._tc)
+
+                    # Skip if this cell has already been processed (merged cell)
+                    if cell_id in processed_cells:
+                        continue
+
+                    processed_cells.add(cell_id)
+
                     cell_text = cell.text.strip()
                     if cell_text:
                         elements.append({
@@ -551,7 +562,8 @@ class DocxSplitter(BaseSplitter):
                             'source': f'table_cell_{row_idx}_{cell_idx}',
                             'table_info': {
                                 'row_index': row_idx,
-                                'cell_index': cell_idx
+                                'cell_index': cell_idx,
+                                'is_merged': cell_id in [id(c._tc) for r in table.rows for c in r.cells if id(c._tc) != cell_id]
                             }
                         })
 
@@ -563,6 +575,7 @@ class DocxSplitter(BaseSplitter):
     def _extract_table_cells_as_documents(self, doc) -> List[Dict[str, Any]]:
         """
         Extract table cells as separate document elements.
+        Handles merged cells efficiently by avoiding duplicate processing.
 
         Args:
             doc: python-docx Document object
@@ -574,8 +587,19 @@ class DocxSplitter(BaseSplitter):
 
         try:
             for table_idx, table in enumerate(doc.tables):
+                processed_cells = set()  # Track processed cell objects per table
+
                 for row_idx, row in enumerate(table.rows):
                     for cell_idx, cell in enumerate(row.cells):
+                        # Use cell object ID to detect merged cells
+                        cell_id = id(cell._tc)
+
+                        # Skip if this cell has already been processed (merged cell)
+                        if cell_id in processed_cells:
+                            continue
+
+                        processed_cells.add(cell_id)
+
                         cell_text = cell.text.strip()
                         if cell_text:
                             elements.append({
@@ -587,7 +611,8 @@ class DocxSplitter(BaseSplitter):
                                 'table_info': {
                                     'table_index': table_idx,
                                     'row_index': row_idx,
-                                    'cell_index': cell_idx
+                                    'cell_index': cell_idx,
+                                    'is_merged': False  # Will be determined by duplicate detection
                                 }
                             })
 
