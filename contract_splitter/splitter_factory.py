@@ -133,6 +133,15 @@ class SplitterFactory:
                     ]
                     logger.info("Configured PDF splitter for legal document processing")
 
+            # 为Excel文件添加法律文档的特殊配置
+            elif format_type in ['xlsx', 'xls', 'xlsm', 'xltx', 'xltm']:
+                # 检查是否是法律文档处理上下文
+                if self._is_legal_document_context(file_path, kwargs):
+                    # 如果没有明确指定extract_mode，使用law_articles模式
+                    if 'extract_mode' not in filtered_kwargs:
+                        filtered_kwargs['extract_mode'] = 'law_articles'
+                        logger.info("Configured Excel splitter for legal document processing with law_articles mode")
+
             splitter = splitter_class(**filtered_kwargs)
             return splitter
         except Exception as e:

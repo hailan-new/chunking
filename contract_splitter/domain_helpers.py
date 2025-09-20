@@ -94,24 +94,52 @@ class LegalClauseSplitter:
         # 使用工厂模式创建合适的splitter
         splitter = self.factory.create_splitter(file_path, **self.splitter_config)
 
-        # 使用层次化分割
-        sections = splitter.split(file_path)
+        # 检查文件格式，对Excel文件使用特殊处理
+        file_extension = file_path.lower().split('.')[-1]
 
-        # 对于法律文档，使用改进的句子优先分块
-        full_text = self._extract_full_text_from_sections(sections)
+        if file_extension in ['xlsx', 'xls', 'xlsm', 'xltx', 'xltm']:
+            # 对于Excel文件，直接使用splitter的分块结果
+            sections = splitter.split(file_path)
 
-        # 使用句子优先的分块策略，保持句子完整性
-        from .utils import sliding_window_split
-        processed_chunks = sliding_window_split(
-            full_text,
-            max_tokens=self.splitter_config.get('max_tokens', 1500),
-            overlap=int(self.splitter_config.get('max_tokens', 1500) * 0.1),  # 10% overlap
-            by_sentence=True,  # 优先保持句子完整性
-            token_counter="character"
-        )
+            # 检查是否已经是特殊的law_articles格式
+            if sections and any(chunk.get('section_type') in ['law_name', 'law_article'] for chunk in sections):
+                # 已经是特殊格式，直接提取内容
+                processed_chunks = []
+                for chunk in sections:
+                    content = chunk.get('content', '').strip()
+                    if content:
+                        processed_chunks.append(content)
+                fixed_chunks = processed_chunks
+                logger.info(f"Using Excel law_articles format with {len(fixed_chunks)} chunks")
+            else:
+                # 回退到普通处理
+                full_text = self._extract_full_text_from_sections(sections)
+                from .utils import sliding_window_split
+                processed_chunks = sliding_window_split(
+                    full_text,
+                    max_tokens=self.splitter_config.get('max_tokens', 1500),
+                    overlap=int(self.splitter_config.get('max_tokens', 1500) * 0.1),
+                    by_sentence=True,
+                    token_counter="character"
+                )
+                fixed_chunks = self._fix_truncated_articles(processed_chunks)
+        else:
+            # 对于非Excel文件，使用原有的处理逻辑
+            sections = splitter.split(file_path)
+            full_text = self._extract_full_text_from_sections(sections)
 
-        # 后处理：修复被错误截断的条文（现在应该很少需要）
-        fixed_chunks = self._fix_truncated_articles(processed_chunks)
+            # 使用句子优先的分块策略，保持句子完整性
+            from .utils import sliding_window_split
+            processed_chunks = sliding_window_split(
+                full_text,
+                max_tokens=self.splitter_config.get('max_tokens', 1500),
+                overlap=int(self.splitter_config.get('max_tokens', 1500) * 0.1),  # 10% overlap
+                by_sentence=True,  # 优先保持句子完整性
+                token_counter="character"
+            )
+
+            # 后处理：修复被错误截断的条文（现在应该很少需要）
+            fixed_chunks = self._fix_truncated_articles(processed_chunks)
 
         logger.info(f"Legal document split into {len(fixed_chunks)} chunks")
         return fixed_chunks
