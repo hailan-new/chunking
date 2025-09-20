@@ -136,9 +136,16 @@ splitter = ExcelSplitter(
 
 sections = splitter.split("法规表格.xlsx")
 
-# 自动识别表格中的法律条文和规则
+# 智能输出格式：
+# - 单工作表：直接显示内容，无冗余前缀
+# - 多工作表：仅显示有意义的工作表名称
 for section in sections:
-    print(f"工作表 {section.metadata.get('sheet_name')}: {section.content[:100]}...")
+    print(f"标题: {section['heading']}")
+    print(f"内容: {section['content'][:100]}...")
+
+# 输出示例：
+# 标题: 第一条                    (单工作表，无Sheet1前缀)
+# 标题: 证券监管规定 - 第二条      (多工作表，有意义名称)
 ```
 
 ### 自定义分块策略
@@ -202,8 +209,9 @@ splitter = ExcelSplitter(extract_mode="table_structure")
 sections = splitter.split("监管指标.xlsx")
 
 for section in sections:
-    if section.metadata.get('type') == 'table':
-        print(f"表格数据: {section.content[:150]}...")
+    # 清洁的输出格式，无冗余工作表名称
+    print(f"标题: {section['heading']}")  # 例如: "表格1" 而不是 "Sheet1 - 表格1"
+    print(f"表格数据: {section['content'][:150]}...")
 ```
 
 ## 📈 性能优势

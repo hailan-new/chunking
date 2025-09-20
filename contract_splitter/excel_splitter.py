@@ -43,7 +43,69 @@ class ExcelSplitter(BaseSplitter):
         self.legal_detector = LegalStructureDetector()
         
         logger.info(f"Excel分割器初始化完成，提取模式: {extract_mode}")
-    
+
+    def _should_include_sheet_name(self, sheet_name: str, total_sheets: int) -> bool:
+        """
+        判断是否应该在输出中包含工作表名称
+
+        Args:
+            sheet_name: 工作表名称
+            total_sheets: 总工作表数量
+
+        Returns:
+            bool: 是否包含工作表名称
+        """
+        # 如果只有一个工作表，不包含工作表名称
+        if total_sheets == 1:
+            return False
+
+        # 如果工作表名称是默认的无意义名称，不包含
+        meaningless_names = ['Sheet1', 'Sheet2', 'Sheet3', 'Sheet4', 'Sheet5',
+                           'Sheet', '工作表1', '工作表2', '工作表3', '工作表',
+                           'Worksheet1', 'Worksheet2', 'Worksheet']
+
+        if sheet_name in meaningless_names:
+            return False
+
+        return True
+
+    def _clean_sheet_name(self, sheet_name: str) -> str:
+        """
+        清理工作表名称，移除无意义的前缀
+
+        Args:
+            sheet_name: 原始工作表名称
+
+        Returns:
+            str: 清理后的工作表名称
+        """
+        # 移除【工作表: 】格式
+        if sheet_name.startswith('【工作表: ') and sheet_name.endswith('】'):
+            sheet_name = sheet_name[5:-1]
+
+        return sheet_name.strip()
+
+    def _format_section_heading(self, sheet_name: str, section_type: str, total_sheets: int) -> str:
+        """
+        格式化章节标题
+
+        Args:
+            sheet_name: 工作表名称
+            section_type: 章节类型
+            total_sheets: 总工作表数量
+
+        Returns:
+            str: 格式化后的标题
+        """
+        clean_name = self._clean_sheet_name(sheet_name)
+
+        # 如果不需要包含工作表名称，直接返回章节类型
+        if not self._should_include_sheet_name(clean_name, total_sheets):
+            return section_type
+
+        # 包含有意义的工作表名称
+        return f"{clean_name} - {section_type}"
+
     def split(self, file_path: str) -> List[Dict[str, Any]]:
         """
         分割Excel文件
@@ -64,22 +126,25 @@ class ExcelSplitter(BaseSplitter):
         
         # 提取文本内容
         text_content = self.excel_processor.extract_text(file_path, self.extract_mode)
-        
+
         if not text_content:
             logger.warning(f"Excel文件无内容: {file_path}")
             return []
-        
+
         logger.info(f"提取文本长度: {len(text_content)} 字符")
-        
+
+        # 计算工作表总数
+        total_sheets = text_content.count('【工作表:')
+
         # 根据提取模式选择处理方法
         if self.extract_mode == "legal_content":
-            return self._split_legal_content(text_content, file_path)
+            return self._split_legal_content(text_content, file_path, total_sheets)
         elif self.extract_mode == "table_structure":
-            return self._split_table_structure(text_content, file_path)
+            return self._split_table_structure(text_content, file_path, total_sheets)
         else:  # all_content
-            return self._split_all_content(text_content, file_path)
+            return self._split_all_content(text_content, file_path, total_sheets)
     
-    def _split_legal_content(self, text_content: str, file_path: str) -> List[Dict[str, Any]]:
+    def _split_legal_content(self, text_content: str, file_path: str, total_sheets: int) -> List[Dict[str, Any]]:
         """分割法律内容"""
         sections = []
         
@@ -109,7 +174,7 @@ class ExcelSplitter(BaseSplitter):
                 # 有法律结构，按法律条文分割
                 for j, legal_section in enumerate(legal_sections):
                     section = {
-                        'heading': f"{sheet_name} - {legal_section.get('heading', f'第{j+1}部分')}",
+                        'heading': self._format_section_heading(sheet_name, legal_section.get('heading', f'第{j+1}部分'), total_sheets),
                         'content': legal_section.get('content', ''),
                         'level': legal_section.get('level', 1),
                         'source_sheet': sheet_name,
@@ -119,13 +184,13 @@ class ExcelSplitter(BaseSplitter):
                     sections.append(section)
             else:
                 # 无明显法律结构，按内容分割
-                content_sections = self._split_content_by_importance(content, sheet_name)
+                content_sections = self._split_content_by_importance(content, sheet_name, total_sheets)
                 sections.extend(content_sections)
         
         # 应用大小限制
         return self._apply_size_constraints(sections)
     
-    def _split_table_structure(self, text_content: str, file_path: str) -> List[Dict[str, Any]]:
+    def _split_table_structure(self, text_content: str, file_path: str, total_sheets: int) -> List[Dict[str, Any]]:
         """分割表格结构"""
         sections = []
         
@@ -149,12 +214,12 @@ class ExcelSplitter(BaseSplitter):
                 continue
             
             # 按表格结构分割
-            table_sections = self._split_by_table_structure(content, sheet_name)
+            table_sections = self._split_by_table_structure(content, sheet_name, total_sheets)
             sections.extend(table_sections)
         
         return self._apply_size_constraints(sections)
     
-    def _split_all_content(self, text_content: str, file_path: str) -> List[Dict[str, Any]]:
+    def _split_all_content(self, text_content: str, file_path: str, total_sheets: int) -> List[Dict[str, Any]]:
         """分割所有内容"""
         sections = []
         
@@ -178,27 +243,27 @@ class ExcelSplitter(BaseSplitter):
                 continue
             
             # 简单按长度分割
-            content_sections = self._split_by_length(content, sheet_name)
+            content_sections = self._split_by_length(content, sheet_name, total_sheets)
             sections.extend(content_sections)
         
         return self._apply_size_constraints(sections)
     
-    def _split_content_by_importance(self, content: str, sheet_name: str) -> List[Dict[str, Any]]:
+    def _split_content_by_importance(self, content: str, sheet_name: str, total_sheets: int) -> List[Dict[str, Any]]:
         """按内容重要性分割"""
         sections = []
         lines = content.split('\n')
-        
+
         current_section = {
-            'heading': f"{sheet_name} - 重要内容",
+            'heading': self._format_section_heading(sheet_name, '重要内容', total_sheets),
             'content': '',
             'level': 1,
             'source_sheet': sheet_name,
             'section_type': 'important_content',
             'subsections': []
         }
-        
+
         normal_section = {
-            'heading': f"{sheet_name} - 一般内容",
+            'heading': self._format_section_heading(sheet_name, '一般内容', total_sheets),
             'content': '',
             'level': 1,
             'source_sheet': sheet_name,
@@ -225,7 +290,7 @@ class ExcelSplitter(BaseSplitter):
         
         return sections
     
-    def _split_by_table_structure(self, content: str, sheet_name: str) -> List[Dict[str, Any]]:
+    def _split_by_table_structure(self, content: str, sheet_name: str, total_sheets: int) -> List[Dict[str, Any]]:
         """按表格结构分割"""
         sections = []
         lines = content.split('\n')
@@ -245,7 +310,7 @@ class ExcelSplitter(BaseSplitter):
                     sections.append(current_section)
                 
                 current_section = {
-                    'heading': f"{sheet_name} - 表格{section_counter}",
+                    'heading': self._format_section_heading(sheet_name, f'表格{section_counter}', total_sheets),
                     'content': line + '\n',
                     'level': 1,
                     'source_sheet': sheet_name,
@@ -262,7 +327,7 @@ class ExcelSplitter(BaseSplitter):
                 # 表格数据行
                 if current_section is None:
                     current_section = {
-                        'heading': f"{sheet_name} - 内容{section_counter}",
+                        'heading': self._format_section_heading(sheet_name, f'内容{section_counter}', total_sheets),
                         'content': '',
                         'level': 1,
                         'source_sheet': sheet_name,
@@ -279,13 +344,13 @@ class ExcelSplitter(BaseSplitter):
         
         return sections
     
-    def _split_by_length(self, content: str, sheet_name: str) -> List[Dict[str, Any]]:
+    def _split_by_length(self, content: str, sheet_name: str, total_sheets: int) -> List[Dict[str, Any]]:
         """按长度分割"""
         sections = []
         lines = content.split('\n')
-        
+
         current_section = {
-            'heading': f"{sheet_name} - 第1部分",
+            'heading': self._format_section_heading(sheet_name, '第1部分', total_sheets),
             'content': '',
             'level': 1,
             'source_sheet': sheet_name,
@@ -309,7 +374,7 @@ class ExcelSplitter(BaseSplitter):
                 # 开始新section
                 section_counter += 1
                 current_section = {
-                    'heading': f"{sheet_name} - 第{section_counter}部分",
+                    'heading': self._format_section_heading(sheet_name, f'第{section_counter}部分', total_sheets),
                     'content': line + '\n',
                     'level': 1,
                     'source_sheet': sheet_name,

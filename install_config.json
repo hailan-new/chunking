@@ -1,7 +1,7 @@
 {
   "package_info": {
     "name": "contract_splitter",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "description": "Advanced document splitter with WPS native support"
   },
   "core_dependencies": [
