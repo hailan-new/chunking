@@ -108,7 +108,11 @@ class ExcelProcessor:
         
         Args:
             file_path: Excel文件路径
-            extract_mode: 提取模式 ("legal_content", "table_structure", "all_content")
+            extract_mode: 提取模式 ("legal_content", "law_articles", "table_structure", "all_content")
+                - "legal_content": 提取法律相关内容
+                - "law_articles": 专门处理法规名称-条文-内容格式（A列法规名称，B列条文号，C列内容）
+                - "table_structure": 提取表格结构
+                - "all_content": 提取所有内容
             
         Returns:
             提取的文本内容，失败返回None
@@ -181,6 +185,8 @@ class ExcelProcessor:
             
             if extract_mode == "legal_content":
                 sheet_text = self._extract_legal_content_openpyxl(sheet)
+            elif extract_mode == "law_articles":
+                sheet_text = self._extract_law_articles_openpyxl(sheet)
             elif extract_mode == "table_structure":
                 sheet_text = self._extract_table_structure_openpyxl(sheet)
             else:  # all_content
@@ -220,7 +226,116 @@ class ExcelProcessor:
                     content_parts.append(row_content)
         
         return '\n'.join(content_parts)
-    
+
+    def _extract_law_articles_openpyxl(self, sheet) -> str:
+        """提取法律条文结构（专门处理法规名称-条文内容格式）"""
+        content_parts = []
+
+        # 检查是否符合法律条文格式：A列法规名称，B列条文内容
+        if sheet.max_row < 2 or sheet.max_column < 2:
+            # 如果不符合格式，回退到普通法律内容提取
+            return self._extract_legal_content_openpyxl(sheet)
+
+        # 检查第一行是否是标题行
+        first_row = [cell.value for cell in sheet[1]]
+        is_header_row = any(
+            str(cell).strip() in ['法规名称', '条文', '内容', '法律名称', '条款', '条文号', '第几条', '法规条文']
+            for cell in first_row if cell is not None
+        )
+
+        start_row = 2 if is_header_row else 1
+
+        # 收集所有数据来检测是否是特殊的法规-条文格式
+        law_name = None
+        articles = []
+        same_law_name_count = 0
+
+        for row_num in range(start_row, sheet.max_row + 1):
+            row = sheet[row_num]
+
+            # 获取A、B列的值
+            current_law_name = str(row[0].value).strip() if row[0].value is not None else ""
+            article_content = str(row[1].value).strip() if len(row) > 1 and row[1].value is not None else ""
+
+            # 跳过空行或无效行
+            if not article_content or article_content == "None":
+                continue
+
+            # 记录法规名称（取第一个非空的）
+            if not law_name and current_law_name and current_law_name != "None":
+                law_name = current_law_name
+
+            # 统计相同法规名称的数量
+            if current_law_name == law_name:
+                same_law_name_count += 1
+
+            # 从条文内容中提取条文号（如果存在）
+            article_num = self._extract_article_number(article_content)
+
+            articles.append({
+                'law_name': current_law_name,
+                'number': article_num,
+                'content': article_content
+            })
+
+        # 检测是否是特殊格式：同一个法规名称重复出现，且条文内容包含条文号
+        is_special_law_format = (
+            law_name and
+            same_law_name_count >= 2 and  # 至少有2行相同的法规名称
+            len([a for a in articles if a['number']]) >= 2  # 至少有2个条文号
+        )
+
+        if is_special_law_format:
+            # 特殊格式：法规名称作为第一个块，然后每个条文作为独立块
+            content_parts.append(f"【LAW_NAME】")
+            content_parts.append(law_name)
+            content_parts.append("")
+
+            # 然后添加每个条文作为独立的块
+            for article in articles:
+                if article['number']:
+                    content_parts.append(f"【ARTICLE】{article['number']}")
+                else:
+                    content_parts.append(f"【ARTICLE】条文")
+                content_parts.append(article['content'])
+                content_parts.append("")
+        else:
+            # 普通格式：每行作为一个完整的条目
+            for article in articles:
+                if article['law_name'] and article['number']:
+                    content_parts.append(f"【{article['law_name']} {article['number']}】")
+                elif article['law_name']:
+                    content_parts.append(f"【{article['law_name']}】")
+                elif article['number']:
+                    content_parts.append(f"【{article['number']}】")
+                else:
+                    content_parts.append(f"【条文】")
+
+                content_parts.append(article['content'])
+                content_parts.append("")
+
+        return '\n'.join(content_parts)
+
+    def _extract_article_number(self, content: str) -> str:
+        """从条文内容中提取条文号"""
+        import re
+
+        # 匹配常见的条文号格式
+        patterns = [
+            r'^第[一二三四五六七八九十百千万\d]+条',  # 第X条
+            r'^第[一二三四五六七八九十百千万\d]+款',  # 第X款
+            r'^第[一二三四五六七八九十百千万\d]+项',  # 第X项
+            r'^\d+\.',  # 数字编号
+            r'^\(\d+\)',  # 括号数字
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, content)
+            if match:
+                return match.group(0)
+
+        return ""
+
     def _extract_table_structure_openpyxl(self, sheet) -> str:
         """提取表格结构"""
         content_parts = []
@@ -284,7 +399,36 @@ class ExcelProcessor:
             sheet = workbook.sheet_by_name(sheet_name)
             
             text_parts.append(f"【工作表: {sheet_name}】")
-            
+
+            if extract_mode == "law_articles":
+                sheet_text = self._extract_law_articles_xlrd(sheet)
+            else:
+                # 默认提取方式
+                content_parts = []
+                for row_idx in range(sheet.nrows):
+                    row_data = []
+                    for col_idx in range(sheet.ncols):
+                        cell_value = sheet.cell_value(row_idx, col_idx)
+                        if cell_value:
+                            row_data.append(str(cell_value).strip())
+
+                    if row_data:
+                        content_parts.append(" | ".join(row_data))
+
+                sheet_text = '\n'.join(content_parts) if content_parts else ""
+
+            if sheet_text:
+                text_parts.append(sheet_text)
+        
+        return '\n\n'.join(text_parts)
+
+    def _extract_law_articles_xlrd(self, sheet) -> str:
+        """使用xlrd提取法律条文结构"""
+        content_parts = []
+
+        # 检查是否符合法律条文格式：A列法规名称，B列条文内容
+        if sheet.nrows < 2 or sheet.ncols < 2:
+            # 如果不符合格式，回退到普通提取
             content_parts = []
             for row_idx in range(sheet.nrows):
                 row_data = []
@@ -292,15 +436,89 @@ class ExcelProcessor:
                     cell_value = sheet.cell_value(row_idx, col_idx)
                     if cell_value:
                         row_data.append(str(cell_value).strip())
-                
+
                 if row_data:
                     content_parts.append(" | ".join(row_data))
-            
-            if content_parts:
-                text_parts.append('\n'.join(content_parts))
-        
-        return '\n\n'.join(text_parts)
-    
+
+            return '\n'.join(content_parts)
+
+        # 检查第一行是否是标题行
+        first_row = [sheet.cell_value(0, col_idx) for col_idx in range(min(2, sheet.ncols))]
+        is_header_row = any(
+            str(cell).strip() in ['法规名称', '条文', '内容', '法律名称', '条款', '条文号', '第几条', '法规条文']
+            for cell in first_row if cell
+        )
+
+        start_row = 1 if is_header_row else 0
+
+        # 收集所有数据来检测是否是特殊的法规-条文格式
+        law_name = None
+        articles = []
+        same_law_name_count = 0
+
+        for row_idx in range(start_row, sheet.nrows):
+            # 获取A、B列的值
+            current_law_name = str(sheet.cell_value(row_idx, 0)).strip() if sheet.ncols > 0 else ""
+            article_content = str(sheet.cell_value(row_idx, 1)).strip() if sheet.ncols > 1 else ""
+
+            # 跳过空行或无效行
+            if not article_content or article_content == "None" or not article_content.strip():
+                continue
+
+            # 记录法规名称（取第一个非空的）
+            if not law_name and current_law_name and current_law_name != "None":
+                law_name = current_law_name
+
+            # 统计相同法规名称的数量
+            if current_law_name == law_name:
+                same_law_name_count += 1
+
+            # 从条文内容中提取条文号（如果存在）
+            article_num = self._extract_article_number(article_content)
+
+            articles.append({
+                'law_name': current_law_name,
+                'number': article_num,
+                'content': article_content
+            })
+
+        # 检测是否是特殊格式
+        is_special_law_format = (
+            law_name and
+            same_law_name_count >= 2 and
+            len([a for a in articles if a['number']]) >= 2
+        )
+
+        if is_special_law_format:
+            # 特殊格式：法规名称作为第一个块，然后每个条文作为独立块
+            content_parts.append(f"【LAW_NAME】")
+            content_parts.append(law_name)
+            content_parts.append("")
+
+            for article in articles:
+                if article['number']:
+                    content_parts.append(f"【ARTICLE】{article['number']}")
+                else:
+                    content_parts.append(f"【ARTICLE】条文")
+                content_parts.append(article['content'])
+                content_parts.append("")
+        else:
+            # 普通格式
+            for article in articles:
+                if article['law_name'] and article['number']:
+                    content_parts.append(f"【{article['law_name']} {article['number']}】")
+                elif article['law_name']:
+                    content_parts.append(f"【{article['law_name']}】")
+                elif article['number']:
+                    content_parts.append(f"【{article['number']}】")
+                else:
+                    content_parts.append(f"【条文】")
+
+                content_parts.append(article['content'])
+                content_parts.append("")
+
+        return '\n'.join(content_parts)
+
     def _extract_with_pandas(self, file_path: str, extract_mode: str) -> str:
         """使用pandas提取内容（通用方法）"""
         import pandas as pd
@@ -312,29 +530,135 @@ class ExcelProcessor:
             
             for sheet_name in excel_file.sheet_names:
                 df = pd.read_excel(file_path, sheet_name=sheet_name)
-                
+
                 text_parts.append(f"【工作表: {sheet_name}】")
-                
-                # 转换为文本
-                content_parts = []
-                for _, row in df.iterrows():
-                    row_data = []
-                    for value in row:
-                        if pd.notna(value):
-                            row_data.append(str(value).strip())
-                    
-                    if row_data:
-                        content_parts.append(" | ".join(row_data))
-                
-                if content_parts:
-                    text_parts.append('\n'.join(content_parts))
+
+                if extract_mode == "law_articles":
+                    sheet_text = self._extract_law_articles_pandas(df)
+                else:
+                    # 默认转换为文本
+                    content_parts = []
+                    for _, row in df.iterrows():
+                        row_data = []
+                        for value in row:
+                            if pd.notna(value):
+                                row_data.append(str(value).strip())
+
+                        if row_data:
+                            content_parts.append(" | ".join(row_data))
+
+                    sheet_text = '\n'.join(content_parts) if content_parts else ""
+
+                if sheet_text:
+                    text_parts.append(sheet_text)
             
             return '\n\n'.join(text_parts)
             
         except Exception as e:
             logger.error(f"pandas处理Excel失败: {e}")
             raise
-    
+
+    def _extract_law_articles_pandas(self, df) -> str:
+        """使用pandas提取法律条文结构"""
+        import pandas as pd
+
+        content_parts = []
+
+        # 检查是否符合法律条文格式：A列法规名称，B列条文内容
+        if len(df.columns) < 2 or len(df) < 1:
+            # 如果不符合格式，回退到普通提取
+            content_parts = []
+            for _, row in df.iterrows():
+                row_data = []
+                for value in row:
+                    if pd.notna(value):
+                        row_data.append(str(value).strip())
+
+                if row_data:
+                    content_parts.append(" | ".join(row_data))
+
+            return '\n'.join(content_parts)
+
+        # 检查第一行是否是标题行（通过列名或第一行数据判断）
+        first_row_values = [str(val) for val in df.iloc[0].values if pd.notna(val)]
+        is_header_row = any(
+            val.strip() in ['法规名称', '条文', '内容', '法律名称', '条款', '条文号', '第几条', '法规条文']
+            for val in first_row_values
+        )
+
+        # 如果第一行是标题，从第二行开始；否则从第一行开始
+        start_idx = 1 if is_header_row else 0
+
+        # 收集所有数据来检测是否是特殊的法规-条文格式
+        law_name = None
+        articles = []
+        same_law_name_count = 0
+
+        for idx in range(start_idx, len(df)):
+            row = df.iloc[idx]
+
+            # 获取A、B列的值
+            current_law_name = str(row.iloc[0]).strip() if len(row) > 0 and pd.notna(row.iloc[0]) else ""
+            article_content = str(row.iloc[1]).strip() if len(row) > 1 and pd.notna(row.iloc[1]) else ""
+
+            # 跳过空行或无效行
+            if not article_content or article_content == "nan" or not article_content.strip():
+                continue
+
+            # 记录法规名称（取第一个非空的）
+            if not law_name and current_law_name and current_law_name != "nan":
+                law_name = current_law_name
+
+            # 统计相同法规名称的数量
+            if current_law_name == law_name:
+                same_law_name_count += 1
+
+            # 从条文内容中提取条文号（如果存在）
+            article_num = self._extract_article_number(article_content)
+
+            articles.append({
+                'law_name': current_law_name,
+                'number': article_num,
+                'content': article_content
+            })
+
+        # 检测是否是特殊格式
+        is_special_law_format = (
+            law_name and
+            same_law_name_count >= 2 and
+            len([a for a in articles if a['number']]) >= 2
+        )
+
+        if is_special_law_format:
+            # 特殊格式：法规名称作为第一个块，然后每个条文作为独立块
+            content_parts.append(f"【LAW_NAME】")
+            content_parts.append(law_name)
+            content_parts.append("")
+
+            for article in articles:
+                if article['number']:
+                    content_parts.append(f"【ARTICLE】{article['number']}")
+                else:
+                    content_parts.append(f"【ARTICLE】条文")
+                content_parts.append(article['content'])
+                content_parts.append("")
+        else:
+            # 普通格式
+            for article in articles:
+                if article['law_name'] and article['number']:
+                    content_parts.append(f"【{article['law_name']} {article['number']}】")
+                elif article['law_name']:
+                    content_parts.append(f"【{article['law_name']}】")
+                elif article['number']:
+                    content_parts.append(f"【{article['number']}】")
+                else:
+                    content_parts.append(f"【条文】")
+
+                content_parts.append(article['content'])
+                content_parts.append("")
+
+        return '\n'.join(content_parts)
+
     def get_file_info(self, file_path: str) -> Dict[str, Any]:
         """
         获取Excel文件信息

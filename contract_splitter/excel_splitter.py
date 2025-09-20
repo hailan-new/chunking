@@ -139,6 +139,8 @@ class ExcelSplitter(BaseSplitter):
         # 根据提取模式选择处理方法
         if self.extract_mode == "legal_content":
             return self._split_legal_content(text_content, file_path, total_sheets)
+        elif self.extract_mode == "law_articles":
+            return self._split_law_articles(text_content, file_path, total_sheets)
         elif self.extract_mode == "table_structure":
             return self._split_table_structure(text_content, file_path, total_sheets)
         else:  # all_content
@@ -189,7 +191,142 @@ class ExcelSplitter(BaseSplitter):
         
         # 应用大小限制
         return self._apply_size_constraints(sections)
-    
+
+    def _split_law_articles(self, text_content: str, file_path: str, total_sheets: int) -> List[Dict[str, Any]]:
+        """分割法律条文（专门处理法规名称-条文-内容格式）"""
+        sections = []
+
+        # 按工作表分割
+        sheet_sections = text_content.split('【工作表:')
+
+        for i, sheet_section in enumerate(sheet_sections):
+            if not sheet_section.strip():
+                continue
+
+            # 提取工作表名称
+            if i == 0:
+                sheet_name = "主要内容"
+                content = sheet_section
+            else:
+                lines = sheet_section.split('\n', 1)
+                sheet_name = lines[0].replace('】', '').strip()
+                content = lines[1] if len(lines) > 1 else ""
+
+            if not content.strip():
+                continue
+
+            # 按条文分割内容
+            article_sections = self._parse_law_articles(content, sheet_name)
+            sections.extend(article_sections)
+
+        # 应用大小限制
+        return self._apply_size_constraints(sections)
+
+    def _parse_law_articles(self, content: str, sheet_name: str) -> List[Dict[str, Any]]:
+        """解析法律条文内容"""
+        sections = []
+        lines = content.split('\n')
+
+        current_article = None
+        current_content = []
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            # 检查是否是特殊标记
+            if line.startswith('【LAW_NAME】'):
+                # 保存前一个条文
+                if current_article and current_content:
+                    article_content = '\n'.join(current_content).strip()
+                    if article_content:
+                        section = {
+                            'heading': current_article,
+                            'content': article_content,
+                            'level': 1,
+                            'source_sheet': sheet_name,
+                            'section_type': 'law_article',
+                            'subsections': []
+                        }
+                        sections.append(section)
+
+                # 开始法规名称块
+                current_article = "法规名称"
+                current_content = []
+            elif line.startswith('【ARTICLE】'):
+                # 保存前一个条文
+                if current_article and current_content:
+                    article_content = '\n'.join(current_content).strip()
+                    if article_content:
+                        section_type = 'law_name' if current_article == "法规名称" else 'law_article'
+                        section = {
+                            'heading': current_article,
+                            'content': article_content,
+                            'level': 1,
+                            'source_sheet': sheet_name,
+                            'section_type': section_type,
+                            'subsections': []
+                        }
+                        sections.append(section)
+
+                # 开始新的条文
+                article_num = line[9:]  # 去掉【ARTICLE】
+                current_article = article_num if article_num else "条文"
+                current_content = []
+            elif line.startswith('【') and line.endswith('】'):
+                # 保存前一个条文
+                if current_article and current_content:
+                    article_content = '\n'.join(current_content).strip()
+                    if article_content:
+                        section_type = 'law_name' if current_article == "法规名称" else 'law_article'
+                        section = {
+                            'heading': current_article,
+                            'content': article_content,
+                            'level': 1,
+                            'source_sheet': sheet_name,
+                            'section_type': section_type,
+                            'subsections': []
+                        }
+                        sections.append(section)
+
+                # 开始新的条文（普通格式）
+                current_article = line[1:-1]  # 去掉【】
+                current_content = []
+            else:
+                # 添加到当前条文内容
+                if current_article:
+                    current_content.append(line)
+                else:
+                    # 如果没有条文标题，可能是普通内容，创建一个通用条目
+                    if line:
+                        section = {
+                            'heading': f"{sheet_name} - 内容",
+                            'content': line,
+                            'level': 1,
+                            'source_sheet': sheet_name,
+                            'section_type': 'general_content',
+                            'subsections': []
+                        }
+                        sections.append(section)
+
+        # 处理最后一个条文
+        if current_article and current_content:
+            article_content = '\n'.join(current_content).strip()
+            if article_content:
+                section_type = 'law_name' if current_article == "法规名称" else 'law_article'
+                section = {
+                    'heading': current_article,
+                    'content': article_content,
+                    'level': 1,
+                    'source_sheet': sheet_name,
+                    'section_type': section_type,
+                    'subsections': []
+                }
+                sections.append(section)
+
+        return sections
+
     def _split_table_structure(self, text_content: str, file_path: str, total_sheets: int) -> List[Dict[str, Any]]:
         """分割表格结构"""
         sections = []
