@@ -29,7 +29,7 @@ def read_requirements():
 
 setup(
     name="contract_splitter",
-    version="2.0.0",
+    version="2.3.0",
     author="Contract Splitter Team",
     author_email="contact@example.com",
     description="Advanced document splitter with WPS native support, enhanced table extraction and multi-format support for contracts and legal documents",
